@@ -350,6 +350,7 @@ class Sequence:
         lora_request: Optional[LoRARequest] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         from_decoder_prompt: bool = True,
+        slo_urgent: float = 0.0,
     ) -> None:
         self.seq_id = seq_id
         self.inputs = inputs
@@ -360,6 +361,8 @@ class Sequence:
         self.from_decoder_prompt = from_decoder_prompt
         self._prompt: Optional[str] = None
         self._prompt_token_ids: Optional[List[int]] = None
+        self.slo_urgent = slo_urgent
+        self.suffix_computed_block_locs : List[int] = [0, 0]
 
         # For decoder-only models, a Sequence is constructed
         # from an LLMInputs instance (the `inputs` arg.)
@@ -548,7 +551,8 @@ class Sequence:
     def __repr__(self) -> str:
         return (f"Sequence(seq_id={self.seq_id}, "
                 f"status={self.status.name}, "
-                f"num_blocks={self.n_blocks}, ")
+                f"num_blocks={self.n_blocks}, "
+                f"slo_urgent={self.slo_urgent}), ")
 
 
 class SequenceGroupState(msgspec.Struct,
@@ -892,6 +896,7 @@ class SequenceGroupMetadata(
     pooling_params: Optional[PoolingParams] = None
     lora_request: Optional[LoRARequest] = None
     computed_block_nums: Optional[List[int]] = None
+    suffix_computed_block_locs: Optional[List[int]] = None
     state: Optional[SequenceGroupState] = msgspec.field(
         default_factory=lambda: SequenceGroupState())
     # "MultiModalDataDict" types. We have to use Any due to msgspec

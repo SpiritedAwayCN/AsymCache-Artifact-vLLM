@@ -1161,11 +1161,13 @@ class Scheduler:
             # We should send the metadata to workers when the first prefill
             # is sent. Subsequent requests could be chunked prefill or decode.
             is_first_prefill = False
+            suffix_computed_block_locs = [0, 0]
             if is_prompt:
                 seqs = seq_group.get_seqs()
                 # Prefill has only 1 sequence.
                 assert len(seqs) == 1
                 num_computed_tokens = seqs[0].data.get_num_computed_tokens()
+                suffix_computed_block_locs = seqs[0].suffix_computed_block_locs
                 is_first_prefill = num_computed_tokens == 0
                 # In the next iteration, all prompt tokens are not computed.
                 # It means the prefill is chunked, and we don't need sampling.
@@ -1190,6 +1192,7 @@ class Scheduler:
                     token_chunk_size=token_chunk_size,
                     lora_request=seq_group.lora_request,
                     computed_block_nums=common_computed_block_nums,
+                    suffix_computed_block_locs=suffix_computed_block_locs,
                     encoder_seq_data=encoder_seq_data,
                     cross_block_table=cross_block_table,
                     state=seq_group.state,

@@ -1,7 +1,8 @@
 """Token blocks."""
-from typing import TYPE_CHECKING, Iterator, List, Optional
+from typing import TYPE_CHECKING, Iterator, List, Optional, Set
 
 from vllm.utils import Device
+from vllm.sequence import Sequence, SequenceGroup
 
 DEFAULT_LAST_ACCESSED_TIME: float = -1
 
@@ -25,6 +26,7 @@ class PhysicalTokenBlock:
 
         self.ref_count = 0
         self.last_accessed = DEFAULT_LAST_ACCESSED_TIME
+        self.ref_seqs: Set[Sequence] = set()
 
         self.computed = False
 

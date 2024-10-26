@@ -1818,9 +1818,12 @@ class ObservabilityConfig:
         if ((self.collect_model_forward_time
              or self.collect_model_execute_time)
                 and self.otlp_traces_endpoint is None):
-            raise ValueError(
-                "collect_model_forward_time or collect_model_execute_time "
-                "requires --otlp-traces-endpoint to be set.")
+            print("Warning: collect_model_forward_time and "
+                  "collect_model_execute_time require --otlp-traces-endpoint "
+                  "to be set.", flush=True)
+            # raise ValueError(
+            #     "collect_model_forward_time or collect_model_execute_time "
+            #     "requires --otlp-traces-endpoint to be set.")
 
 
 @dataclass(frozen=True)

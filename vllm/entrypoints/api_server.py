@@ -49,11 +49,12 @@ async def generate(request: Request) -> Response:
     request_dict = await request.json()
     prompt = request_dict.pop("prompt")
     stream = request_dict.pop("stream", False)
+    slo_urgent = request_dict.pop("slo_urgent", 0)
     sampling_params = SamplingParams(**request_dict)
     request_id = random_uuid()
 
     assert engine is not None
-    results_generator = engine.generate(prompt, sampling_params, request_id)
+    results_generator = engine.generate(prompt, sampling_params, request_id, slo_urgent=slo_urgent)
     results_generator = iterate_with_cancellation(
         results_generator, is_cancelled=request.is_disconnected)
 

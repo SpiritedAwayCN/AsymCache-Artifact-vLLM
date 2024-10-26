@@ -653,6 +653,7 @@ class LLMEngine:
         lora_request: Optional[LoRARequest],
         prompt_adapter_request: Optional[PromptAdapterRequest],
         trace_headers: Optional[Mapping[str, str]] = None,
+        slo_urgent: float = 0.0,
     ) -> None:
         self._validate_model_inputs(processed_inputs)
         # Create the sequences.
@@ -661,7 +662,7 @@ class LLMEngine:
         eos_token_id = self._get_eos_token_id(lora_request)
 
         seq = Sequence(seq_id, processed_inputs, block_size, eos_token_id,
-                       lora_request, prompt_adapter_request)
+                       lora_request, prompt_adapter_request, slo_urgent=slo_urgent)
 
         encoder_seq = None
         if 'encoder_prompt_token_ids' in processed_inputs:
@@ -1045,6 +1046,7 @@ class LLMEngine:
         lora_request: Optional[LoRARequest] = None,
         trace_headers: Optional[Mapping[str, str]] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
+        slo_urgent: float = 0.0,
     ) -> None:
         """Add a request to the engine's request pool.
 
@@ -1109,6 +1111,7 @@ class LLMEngine:
             lora_request=lora_request,
             prompt_adapter_request=prompt_adapter_request,
             trace_headers=trace_headers,
+            slo_urgent=slo_urgent,
         )
 
     def _create_sequence_group_with_sampling(

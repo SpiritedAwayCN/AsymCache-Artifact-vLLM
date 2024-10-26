@@ -1,6 +1,7 @@
 """Attention layer with FlashAttention."""
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Type
+import itertools
 
 import torch
 
@@ -37,6 +38,7 @@ def flash_attn_varlen_func(
     softcap: float = 0.0,
     alibi_slopes: Optional[torch.Tensor] = None,
     block_table: Optional[torch.Tensor] = None,
+    seqused_k: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     # custom op does not support tuple input
     real_window_size: Tuple[int, int]
@@ -59,6 +61,7 @@ def flash_attn_varlen_func(
         softcap=softcap,
         alibi_slopes=alibi_slopes,
         block_table=block_table,
+        seqused_k=seqused_k,
     )
 
 
@@ -237,6 +240,13 @@ class FlashAttentionMetadata(AttentionMetadata):
     # Cuda-graph is currently enabled for decoding only.
     # TODO(woosuk): Move `use_cuda_graph` out since it's unrelated to attention.
     use_cuda_graph: bool
+    
+    # MODIFIED for second segment cache
+    query_start_loc2: Optional[torch.Tensor] = None
+    # context_lens_tensor2: Optional[torch.Tensor]
+    seq_used_k: Optional[torch.Tensor] = None
+    num_prefill_tokens_firstseg: int = 0
+    max_query_len2: int = 0
 
     _cached_prefill_metadata: Optional["FlashAttentionMetadata"] = None
     _cached_decode_metadata: Optional["FlashAttentionMetadata"] = None
@@ -271,6 +281,11 @@ class FlashAttentionMetadata(AttentionMetadata):
             context_lens_tensor=self.context_lens_tensor[:self.num_prefills],
             block_tables=self.block_tables[:self.num_prefills],
             use_cuda_graph=False,
+            query_start_loc2=self.query_start_loc2,
+            # context_lens_tensor2=None,
+            seq_used_k=self.seq_used_k,
+            num_prefill_tokens_firstseg=self.num_prefill_tokens_firstseg,
+            max_query_len2=self.max_query_len2,
         )
         return self._cached_prefill_metadata
 
@@ -299,6 +314,11 @@ class FlashAttentionMetadata(AttentionMetadata):
             context_lens_tensor=None,
             block_tables=self.block_tables[self.num_prefills:],
             use_cuda_graph=self.use_cuda_graph,
+            query_start_loc2=None,
+            # context_lens_tensor2=None,
+            seq_used_k=None,
+            num_prefill_tokens_firstseg=0,
+            max_query_len2=0,
         )
         return self._cached_decode_metadata
 
@@ -371,7 +391,8 @@ class FlashAttentionMetadataBuilder(
 
     def _add_seq_group(
             self, inter_data: "ModelInputForGPUBuilder.InterDataForSeqGroup",
-            chunked_prefill_enabled: bool, prefix_cache_hit: bool):
+            chunked_prefill_enabled: bool, prefix_cache_hit: bool,
+            slot_mapping_suffix: List[int] = [],):
         """Add a sequence group to the metadata. Specifically update/append
         1. context length.
         2. block table.
@@ -422,9 +443,31 @@ class FlashAttentionMetadataBuilder(
             start_idx = compute_slot_mapping_start_idx(
                 is_prompt, query_len, context_len, self.sliding_window,
                 self.use_v2_block_manager)
-            compute_slot_mapping(is_profile_run, self.slot_mapping, seq_id,
-                                 seq_len, context_len, start_idx,
-                                 self.block_size, inter_data.block_tables)
+            
+            if inter_data.suffix_computed_block_locs is None or inter_data.suffix_computed_block_locs[1] <= 0:
+                # print('args of compute_slot_mapping',
+                #         f'is_profile_run: {is_profile_run}',
+                #         f'slot_mapping: {self.slot_mapping}',
+                #         f'seq_id: {seq_id}',
+                #         f'seq_len: {seq_len}',
+                #         f'context_len: {context_len}',
+                #         f'start_idx: {start_idx}',
+                #         f'block_size: {self.block_size}',
+                #         f'block_tables: {inter_data.block_tables}',
+                #         flush=True)
+                compute_slot_mapping(is_profile_run, self.slot_mapping, seq_id,
+                                    seq_len, context_len, start_idx,
+                                    self.block_size, inter_data.block_tables)
+            else:
+                assert inter_data.suffix_computed_block_locs[0] > 0, f"suffix_computed_block_locs: {inter_data.suffix_computed_block_locs}"
+                # assert is_prompt == True
+                compute_slot_mapping(is_profile_run, self.slot_mapping, seq_id,
+                                    inter_data.suffix_computed_block_locs[0], context_len, start_idx,
+                                    self.block_size, inter_data.block_tables)
+                compute_slot_mapping(is_profile_run, slot_mapping_suffix, seq_id,
+                                    seq_len, inter_data.suffix_computed_block_locs[1], start_idx,
+                                    self.block_size, inter_data.block_tables)
+            
 
     def build(self, seq_lens: List[int], query_lens: List[int],
               cuda_graph_pad_size: int, batch_size: int):
@@ -441,15 +484,35 @@ class FlashAttentionMetadataBuilder(
             inter_data.prefix_cache_hit
             for inter_data in self.input_builder.inter_data_list
         ])
+        
+        slot_mapping_suffix : List[int] = []
+        seq_used_k: List[int] = []
+        query_lens_2: List[int] = []
+        sum_query_lens2: int = 0
+        cache_2seg: bool = False
+        
         for inter_data in self.input_builder.inter_data_list:
             self._add_seq_group(inter_data,
                                 self.input_builder.chunked_prefill_enabled,
-                                prefix_cache_hit)
+                                prefix_cache_hit,
+                                slot_mapping_suffix)
+            if inter_data.suffix_computed_block_locs is not None:
+                seq_used_k.append(inter_data.suffix_computed_block_locs[0])
+                val = len(inter_data.input_positions_seg2[0])
+                if inter_data.is_prompt:
+                    self.num_prefill_tokens += val
+                query_lens_2.append(val)
+                sum_query_lens2 += val
+                cache_2seg = True if inter_data.suffix_computed_block_locs[1] > 0 else cache_2seg
+                print(f"suffix_computed_block_locs: {inter_data.suffix_computed_block_locs}, val: {val}", flush=True)
+        
+        self.slot_mapping.extend(slot_mapping_suffix)
 
         device = self.runner.device
         use_captured_graph = cuda_graph_pad_size != -1
 
         max_query_len = max(query_lens)
+        max_query_len2 = max(query_lens_2) if sum_query_lens2 > 0 else 0
         max_prefill_seq_len = max(self.prefill_seq_lens, default=0)
         max_decode_seq_len = max(self.curr_seq_lens, default=0)
         num_decode_tokens = self.num_decode_tokens
@@ -499,6 +562,41 @@ class FlashAttentionMetadataBuilder(
                      dim=0,
                      dtype=query_start_loc.dtype,
                      out=query_start_loc[1:])
+
+        if cache_2seg:
+            query_lens_tensor_2 = async_tensor_h2d(query_lens_2, torch.long, device,
+                                               self.runner.pin_memory)
+            seq_used_k_tensor = async_tensor_h2d(seq_used_k, torch.int, device,
+                                                self.runner.pin_memory)
+            
+            query_start_loc2 = torch.zeros(query_lens_tensor_2.shape[0] + 1,
+                                        dtype=torch.int32,
+                                        device=device)
+            torch.cumsum(query_lens_tensor_2,
+                        dim=0,
+                        dtype=query_start_loc2.dtype,
+                        out=query_start_loc2[1:])
+            print('new meta builder', flush=True)
+            return FlashAttentionMetadata(
+                num_prefills=self.num_prefills,
+                slot_mapping=slot_mapping_tensor,
+                num_prefill_tokens=self.num_prefill_tokens,
+                num_decode_tokens=num_decode_tokens,
+                seq_lens=seq_lens,
+                seq_lens_tensor=seq_lens_tensor,
+                max_query_len=max_query_len,
+                max_prefill_seq_len=max_prefill_seq_len,
+                max_decode_seq_len=max_decode_seq_len,
+                query_start_loc=query_start_loc,
+                seq_start_loc=seq_start_loc,
+                context_lens_tensor=context_lens_tensor,
+                block_tables=block_tables,
+                use_cuda_graph=use_captured_graph,
+                query_start_loc2=query_start_loc2,
+                seq_used_k=seq_used_k_tensor,
+                max_query_len2=max_query_len2,
+                num_prefill_tokens_firstseg=self.num_prefill_tokens-sum_query_lens2,
+            )
 
         return FlashAttentionMetadata(
             num_prefills=self.num_prefills,
@@ -647,7 +745,8 @@ class FlashAttentionImpl(AttentionImpl):
 
         num_prefill_tokens = attn_metadata.num_prefill_tokens
         num_decode_tokens = attn_metadata.num_decode_tokens
-        assert key.shape[0] == num_prefill_tokens + num_decode_tokens
+        num_prefill_tokens_firstseg = attn_metadata.num_prefill_tokens_firstseg
+        assert key.shape[0] == num_prefill_tokens + num_decode_tokens, f'key.shape[0]: {key.shape[0]}, atten_meta: {attn_metadata}'
         assert value.shape[0] == num_prefill_tokens + num_decode_tokens
 
         output = torch.empty_like(query)
@@ -687,25 +786,82 @@ class FlashAttentionImpl(AttentionImpl):
             else:
                 # prefix-enabled attention
                 assert prefill_meta.seq_lens is not None
-                max_seq_len = max(prefill_meta.seq_lens)
-                output[:
-                       num_prefill_tokens] = torch.ops.vllm.flash_attn_varlen_func(  # noqa
-                           q=query,
-                           k=key_cache,
-                           v=value_cache,
-                           cu_seqlens_q=prefill_meta.query_start_loc,
-                           max_seqlen_q=prefill_meta.max_query_len,
-                           cu_seqlens_k=prefill_meta.seq_start_loc,
-                           max_seqlen_k=max_seq_len,
-                           softmax_scale=self.scale,
-                           causal=True,
-                           alibi_slopes=self.alibi_slopes,
-                           block_table=prefill_meta.block_tables,
-                           softcap=self.logits_soft_cap,
-                       )
+                
+                if prefill_meta.num_prefill_tokens_firstseg <= 0:
+                    max_seq_len = max(prefill_meta.seq_lens)
+                    
+                    print("prefix-enabled", f"prefill_meta: {prefill_meta}", flush=True)
+                    output[:
+                        num_prefill_tokens] = torch.ops.vllm.flash_attn_varlen_func(  # noqa
+                            q=query,
+                            k=key_cache,
+                            v=value_cache,
+                            cu_seqlens_q=prefill_meta.query_start_loc,
+                            max_seqlen_q=prefill_meta.max_query_len,
+                            cu_seqlens_k=prefill_meta.seq_start_loc,
+                            max_seqlen_k=max_seq_len,
+                            softmax_scale=self.scale,
+                            causal=True,
+                            alibi_slopes=self.alibi_slopes,
+                            block_table=prefill_meta.block_tables,
+                            softcap=self.logits_soft_cap,
+                        )
+                else:
+                    # two segment cache
+                    # TODO(sca): may only second segment, need repair
+                    
+                    print("two-segment", f"prefill_meta: {prefill_meta}", flush=True)
+                    
+                    # first segment
+                    max_seq_len = max(prefill_meta.seq_used_k)
+                    output[:
+                        num_prefill_tokens_firstseg] = torch.ops.vllm.flash_attn_varlen_func(  # noqa
+                            q=query[:num_prefill_tokens_firstseg],
+                            k=key_cache,
+                            v=value_cache,
+                            cu_seqlens_q=prefill_meta.query_start_loc,
+                            max_seqlen_q=prefill_meta.max_query_len,
+                            cu_seqlens_k=prefill_meta.seq_start_loc,
+                            max_seqlen_k=max_seq_len,
+                            softmax_scale=self.scale,
+                            causal=True,
+                            alibi_slopes=self.alibi_slopes,
+                            block_table=prefill_meta.block_tables,
+                            softcap=self.logits_soft_cap,
+                            seqused_k=prefill_meta.seq_used_k,
+                        )
+                    
+                    # for debug
+                    torch.cuda.synchronize()
+                    print("first segment done", flush=True)
+                    
+                    # second segment
+                    max_seq_len = max(prefill_meta.seq_lens)
+                    output[
+                        num_prefill_tokens_firstseg:
+                        num_prefill_tokens] = torch.ops.vllm.flash_attn_varlen_func(  # noqa
+                            q=query[num_prefill_tokens_firstseg:],
+                            k=key_cache,
+                            v=value_cache,
+                            cu_seqlens_q=prefill_meta.query_start_loc2,
+                            max_seqlen_q=prefill_meta.max_query_len2,
+                            cu_seqlens_k=prefill_meta.seq_start_loc,
+                            max_seqlen_k=max_seq_len,
+                            softmax_scale=self.scale,
+                            causal=True,
+                            alibi_slopes=self.alibi_slopes,
+                            block_table=prefill_meta.block_tables,
+                            softcap=self.logits_soft_cap,
+                        )
+                    
+                    # for debug
+                    torch.cuda.synchronize()
+                    print("second segment done", flush=True)
+                    print(f"output: {output}", flush=True)
 
         if decode_meta := attn_metadata.decode_metadata:
             # Decoding run.
+            print("decoding run", f"decode_meta: {decode_meta}", flush=True)
             output[
                 num_prefill_tokens:] = torch.ops.vllm.flash_attn_with_kvcache(
                     decode_query.unsqueeze(1),
