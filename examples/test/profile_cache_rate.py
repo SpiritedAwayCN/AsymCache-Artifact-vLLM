@@ -15,13 +15,13 @@ llm = LLM(
 
 sampling_params=SamplingParams(temperature=0, max_tokens=1)
 
-TOTAL_LENGTH = 10240
+TOTAL_LENGTH = 1024
 BASE_TOKEN_ID = 5
 MAX_TRY = 10
 
 target_input_ids = [BASE_TOKEN_ID] * TOTAL_LENGTH
 
-f = open('profile_cache_10k-tp2.csv', 'w')
+f = open('profile_cache_1k-tp2.csv', 'w')
 f.write('cached_length,' + ','.join([f'p{i+1}' for i in range(MAX_TRY)]))
 f.write(',AVG\n')
 llm.generate(None, 

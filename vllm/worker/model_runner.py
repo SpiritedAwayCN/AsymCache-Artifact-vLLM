@@ -1515,6 +1515,12 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             model_forward_end = torch.cuda.Event(enable_timing=True)
             model_forward_start.record()
 
+        # if (model_input.input_tokens is not None) and (1000 < model_input.input_tokens.shape[0] < 2000):
+        #     torch.cuda.synchronize()
+        #     print(f"tokens: {model_input.input_tokens.shape} {model_input.input_tokens[80:176]}, {model_input.input_tokens[1360:]},\n"
+        #         f"positions: {model_input.input_positions.shape} {model_input.input_positions[80:176]}, {model_input.input_positions[1360:]},\n", 
+        #         flush=True)
+        
         hidden_or_intermediate_states = model_executable(
             input_ids=model_input.input_tokens,
             positions=model_input.input_positions,

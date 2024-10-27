@@ -2,12 +2,29 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-df = pd.read_csv('profile_cache_10k-tp2.csv')
+map_str = {
+    'origin': '',
+    '2-kernel': '_2seg',
+}
 
-x, y = df['cached_length'], df['AVG']
-plt.plot(x, y)
+def plot_cache_rate(ax, filename_base, title):
+    for label, fn in map_str.items():
+        df = pd.read_csv(filename_base%fn)
+        # sort by cached_length
+        df = df.sort_values(by='cached_length')
+        x, y = df['cached_length'], df['AVG']
+        # print(filename_base%fn, x, y)
+        ax.plot(x, y, label=label)
 
-plt.xlabel('Cached Length')
-plt.ylabel('Average Prefill Time (ms)')
+    ax.set_xlabel('Cached Length')
+    ax.set_ylabel('Average Prefill Time (ms)')
+    ax.set_title(title)
+    ax.legend()
 
-plt.savefig('profile_cache_rate_10k-tp2.png')
+fig, axs = plt.subplots(2, tight_layout=True)
+
+for i, l in enumerate(['1k', '10k']):
+    filename_base = f'profile_cache%s_{l}-tp2.csv'
+    plot_cache_rate(axs[i], filename_base, f'Llama3.1-8B, TP=2, Prefill Length: ({l})')
+
+plt.savefig('profile_cache_rate.png')

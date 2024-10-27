@@ -177,6 +177,15 @@ class LlamaAttention(nn.Module):
     ) -> torch.Tensor:
         qkv, _ = self.qkv_proj(hidden_states)
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+        # if q.shape[0] <= 96:
+        #     pass
+        # elif q.shape[0] < 500:
+        #     # print(f"before emb q[0]: {q[0]}", flush=True)
+        #     print(f"before emb q[119]: {q[119]}", flush=True)
+        # elif q.shape[0] <= 2000:
+        #     # print(f"before emb q[80]: {q[80]}", flush=True)
+        #     print(f"before emb q[1383]: {q[1383]}", flush=True)
+        # print(f"before emb positions: {positions}", flush=True)
         q, k = self.rotary_emb(positions, q, k)
         attn_output = self.attn(q, k, v, kv_cache, attn_metadata)
         output, _ = self.o_proj(attn_output)

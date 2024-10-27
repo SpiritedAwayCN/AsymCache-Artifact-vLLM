@@ -69,11 +69,16 @@ block_manager.test_ignore_cache_block_num = 6
 
 sampling_params = SamplingParams(temperature=0, max_tokens=10)
 
+questions = [
+    "Question: what is the age of John Doe? Your answer: The age of John Doe is ",
+    "Question: what is the age of Zack Blue? Your answer: The age of Zack Blue is ",
+]
+
 # Querying the age of John Doe
 get_generation_time(
     llm,
     sampling_params,
-    LONG_PROMPT + "Question: what is the age of John Doe? Your answer: The age of John Doe is ",
+    LONG_PROMPT + questions[0],
 )
 
 # Querying the age of Zack Blue
@@ -81,5 +86,5 @@ get_generation_time(
 get_generation_time(
     llm,
     sampling_params,
-    LONG_PROMPT + "Question: what is the age of Zack Blue? Your answer: The age of Zack Blue is ",
+    LONG_PROMPT + questions[1],
 )

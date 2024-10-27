@@ -78,14 +78,14 @@ class LRUEvictor(Evictor):
         # find the one with maximum number of hashed tokens.
         
         # temp implementation
-        # logger.info(self.free_table)
+        # logger.info(f"num free table: {len(self.free_table)}")
         for _, block in self.free_table.items():
-            # logger.info(f"Block {block.block_number} is being considered for eviction, "
-            #             f"ref_seqs: {block.ref_seqs}")
+            # logger.info(f"Block {block.block_number} is being considered for eviction, ")
+                        # f"ref_seqs: {block.ref_seqs}")
             for seq in block.ref_seqs:
                 if seq.slo_urgent and seq.slo_urgent >= 1:
-                    logger.debug(f"Block {block.block_number} is not evicted "
-                                f"because of slo_urgent from seq {seq}")
+                    # logger.info(f"Block {block.block_number} is not evicted "
+                    #             f"because of slo_urgent from seq {seq}")
                     break
             else:
                 if evicted_block is None:
@@ -98,7 +98,7 @@ class LRUEvictor(Evictor):
 
         self.free_table.pop(evicted_block.block_hash)
         
-        logger.debug(f'block {evicted_block.block_number} is evicted, ref_seqs: {evicted_block.ref_seqs}')
+        # logger.info(f'Block {evicted_block.block_number} is evicted') #, ref_seqs: {evicted_block.ref_seqs}')
         evicted_block.computed = False
         evicted_block.ref_seqs.clear()
         return evicted_block

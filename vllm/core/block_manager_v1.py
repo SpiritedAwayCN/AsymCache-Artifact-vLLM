@@ -19,6 +19,7 @@ from vllm.utils import Device
 
 logger = init_logger(__name__)
 
+_tmp_x, _tmp_y = 0, 0
 
 class BlockAllocatorBase(ABC):
     """Manages free physical token blocks for a device.
@@ -113,6 +114,7 @@ class CachedBlockAllocator(BlockAllocatorBase):
                  block_hash: Optional[int] = None,
                  num_hashed_tokens: int = 0,
                  force_ignore_cache: bool = False) -> PhysicalTokenBlock:
+        global _tmp_x, _tmp_y
         if block_hash is None:
             block_hash = next(self.default_hash_ctr)
 
@@ -121,7 +123,18 @@ class CachedBlockAllocator(BlockAllocatorBase):
             block = self.evictor.remove(block_hash)
             assert block.ref_count == 0
             if force_ignore_cache:
+                import time
+                import random
                 block.computed = False
+                block.last_accessed = -1
+                block.ref_seqs.clear()
+                
+                while True:
+                    block.block_hash = hash((tuple([10 + _tmp_x] * 31), 0))
+                    _tmp_x += 1
+                    if block.block_hash not in self.evictor:
+                        break
+                self.evictor.add(block)
             else:
                 self.cached_blocks[block_hash] = block
 
@@ -140,6 +153,7 @@ class CachedBlockAllocator(BlockAllocatorBase):
         if block.ref_count == 0:
             raise ValueError(f"Double free! {block} is already freed.")
         block.ref_count -= 1
+        # logger.info(f"Block {block.block_number} is being freed (refcnt={block.ref_count})")
         if block.ref_count == 0:
             assert block.block_hash not in self.evictor
             self.evictor.add(block)
