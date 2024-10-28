@@ -35,7 +35,11 @@ LONG_PROMPT = "You are a helpful assistant in recognizes the content of tables i
 | 27  | Yara Red      | 41  | Teacher       | UK            | yara.r@example.com     | 555-1214       | 975 Pine St, Leeds, UK       |
 | 28  | Zack Blue     | 30  | Lawyer        | Australia     | zack.b@example.com     | 555-3436       | 135 Birch St, Adelaide, SA   |
 | 29  | Amy White     | 33  | Musician      | New Zealand   | amy.w@example.com      | 555-5658       | 159 Maple St, Wellington, NZ |
-| 30  | Ben Black     | 38  | Chef          | Ireland       | ben.b@example.com      | 555-7870       | 246 Fir St, Waterford, IE    |
+"""
+
+last_line1 = """| 30  | Ben Black     | 38  | Chef          | Ireland       | ben.b@example.com      | 555-7870       | 246 Fir St, Waterford, IE    |
+"""
+last_line2 = """| 30  | Aen Black     | 38  | Chef          | Ireland       | ben.b@example.com      | 555-7870       | 246 Fir St, Waterford, IE    |
 """
 
 
@@ -56,9 +60,9 @@ def get_generation_time(llm, sampling_params, prompts):
 llm = LLM(
     model='meta-llama/Meta-Llama-3.1-8B-Instruct',
     enable_prefix_caching=True,
-    tensor_parallel_size=2,
+    tensor_parallel_size=1,
     disable_log_stats=False,
-    enforce_eager=True,
+    enforce_eager=False,
 )
 block_manager = llm.llm_engine.scheduler[0].block_manager
 print(block_manager.__class__.__name__)
@@ -78,7 +82,7 @@ questions = [
 get_generation_time(
     llm,
     sampling_params,
-    LONG_PROMPT + questions[0],
+    LONG_PROMPT + last_line1 + questions[0],
 )
 
 # Querying the age of Zack Blue
@@ -86,5 +90,5 @@ get_generation_time(
 get_generation_time(
     llm,
     sampling_params,
-    LONG_PROMPT + questions[1],
+    LONG_PROMPT + last_line1 + questions[1],
 )

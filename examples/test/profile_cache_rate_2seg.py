@@ -1,9 +1,11 @@
-import time
-import json
-import random
+import sys
+import os
 import numpy as np
 from tqdm import trange
 from vllm import LLM, SamplingParams
+
+assert sys.argv[1] in ['1k', '10k'], f'Invalid argument, got {sys.argv[1]}'
+OUTPUT_DIR = './examples/test/output/'
 
 llm = LLM(
     model='meta-llama/Meta-Llama-3.1-8B-Instruct',
@@ -17,16 +19,20 @@ print(block_manager.__class__.__name__)
 
 sampling_params=SamplingParams(temperature=0, max_tokens=1)
 
-TOTAL_LENGTH = 1024 * 10
-BASE_TOKEN_ID = 5
-MAX_TRY = 6
-
-# POST_TOKEN, START_TOKEN = 32, 32 # for 1K
-POST_TOKEN, START_TOKEN = 128, 32 # for 10K
+if sys.argv[1] == '1k':
+    TOTAL_LENGTH = 1024
+    BASE_TOKEN_ID = 5
+    MAX_TRY = 10
+    POST_TOKEN, START_TOKEN = 32, 32 # for 1K
+else:
+    TOTAL_LENGTH = 1024 * 10
+    BASE_TOKEN_ID = 5
+    MAX_TRY = 6
+    POST_TOKEN, START_TOKEN = 128, 32 # for 10K
 
 target_input_ids = [BASE_TOKEN_ID] * (TOTAL_LENGTH - POST_TOKEN)
 
-f = open('profile_cache_2seg_10k-tp2.csv', 'w')
+f = open(os.path.join(OUTPUT_DIR, f'profile_cache_2seg_{sys.argv[1]}-tp2.csv'), 'w')
 f.write('cached_length,' + ','.join([f'p{i+1}' for i in range(MAX_TRY)]))
 f.write(',AVG\n')
 llm.generate(None, 

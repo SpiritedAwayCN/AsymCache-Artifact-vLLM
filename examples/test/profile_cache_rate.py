@@ -1,9 +1,11 @@
-import time
-import json
-import random
 import numpy as np
 from tqdm import trange
 from vllm import LLM, SamplingParams
+import sys
+import os
+
+assert sys.argv[1] in ['1k', '10k'], f'Invalid argument, got {sys.argv[1]}'
+OUTPUT_DIR = './examples/test/output/'
 
 llm = LLM(
     model='meta-llama/Meta-Llama-3.1-8B-Instruct',
@@ -15,13 +17,18 @@ llm = LLM(
 
 sampling_params=SamplingParams(temperature=0, max_tokens=1)
 
-TOTAL_LENGTH = 1024
-BASE_TOKEN_ID = 5
-MAX_TRY = 10
+if sys.argv[1] == '1k':
+    TOTAL_LENGTH = 1024
+    BASE_TOKEN_ID = 5
+    MAX_TRY = 10
+else:
+    TOTAL_LENGTH = 1024 * 10
+    BASE_TOKEN_ID = 5
+    MAX_TRY = 6
 
 target_input_ids = [BASE_TOKEN_ID] * TOTAL_LENGTH
 
-f = open('profile_cache_1k-tp2.csv', 'w')
+f = open(os.path.join(OUTPUT_DIR, f'profile_cache_{sys.argv[1]}-tp2.csv'), 'w')
 f.write('cached_length,' + ','.join([f'p{i+1}' for i in range(MAX_TRY)]))
 f.write(',AVG\n')
 llm.generate(None, 
@@ -53,4 +60,5 @@ for cached_length in trange_obj:
     results.sort()
     # ignore the max two and min two
     f.write(',' + str(np.mean(results[2:-2])) + '\n')
+    f.flush()
 f.close()

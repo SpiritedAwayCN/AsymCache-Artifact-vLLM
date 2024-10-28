@@ -1,15 +1,21 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import os
 
 map_str = {
     'origin': '',
     '2-kernel': '_2seg',
 }
+DATA_DIR = './examples/test/output/'
 
 def plot_cache_rate(ax, filename_base, title):
     for label, fn in map_str.items():
-        df = pd.read_csv(filename_base%fn)
+        try:
+            df = pd.read_csv(filename_base%fn)
+        except FileNotFoundError:
+            print(f'File not found: {filename_base%fn}')
+            continue
         # sort by cached_length
         df = df.sort_values(by='cached_length')
         x, y = df['cached_length'], df['AVG']
@@ -24,7 +30,7 @@ def plot_cache_rate(ax, filename_base, title):
 fig, axs = plt.subplots(2, tight_layout=True)
 
 for i, l in enumerate(['1k', '10k']):
-    filename_base = f'profile_cache%s_{l}-tp2.csv'
+    filename_base = os.path.join(DATA_DIR, f'profile_cache%s_{l}-tp2.csv')
     plot_cache_rate(axs[i], filename_base, f'Llama3.1-8B, TP=2, Prefill Length: ({l})')
 
 plt.savefig('profile_cache_rate.png')
