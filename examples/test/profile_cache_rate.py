@@ -1,6 +1,7 @@
 import numpy as np
 from tqdm import trange
 from vllm import LLM, SamplingParams
+import torch
 import sys
 import os
 
@@ -45,11 +46,11 @@ for cached_length in trange_obj:
     for i in range(MAX_TRY):
         input_ids = target_input_ids[:cached_length] + \
             [BASE_TOKEN_ID + i + 1] * (TOTAL_LENGTH - cached_length)
-        outputs = llm.generate(None, 
-                              sampling_params=sampling_params,
-                              prompt_token_ids=input_ids,
-                              use_tqdm=False)
-        
+        with torch.cuda.nvtx.range(f'cache_len={cached_length},try={i}'):
+            outputs = llm.generate(None, 
+                                sampling_params=sampling_params,
+                                prompt_token_ids=input_ids,
+                                use_tqdm=False)
         prefill_time = outputs[0].metrics.first_token_time - outputs[0].metrics.first_scheduled_time
         forward_time = outputs[0].metrics.model_forward_time
         results.append(forward_time)

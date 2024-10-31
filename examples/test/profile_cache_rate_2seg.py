@@ -3,6 +3,7 @@ import os
 import numpy as np
 from tqdm import trange
 from vllm import LLM, SamplingParams
+import torch
 
 assert sys.argv[1] in ['1k', '10k'], f'Invalid argument, got {sys.argv[1]}'
 OUTPUT_DIR = './examples/test/output/'
@@ -47,8 +48,8 @@ block_manager.test_ignore_cache_block_start = START_TOKEN // block_manager.block
 trange_obj = trange(TOTAL_LENGTH - POST_TOKEN,  START_TOKEN, -16)
 # output_lines = []
 for i, cached_length in enumerate(trange_obj):
-    if cached_length >= 4608:
-        continue
+    # if cached_length >= 4608:
+    #     continue
     output_stdout = str(cached_length) + ','
     
     results = []
@@ -58,10 +59,11 @@ for i, cached_length in enumerate(trange_obj):
     print(f'block_manager.test_ignore_cache_block_start: {block_manager.test_ignore_cache_block_start}')
     for j in range(MAX_TRY):
         input_ids = target_input_ids + [(i * MAX_TRY + j) % 20000 + 5] * POST_TOKEN
-        outputs = llm.generate(None, 
-                              sampling_params=sampling_params,
-                              prompt_token_ids=input_ids,
-                              use_tqdm=False)
+        with torch.cuda.nvtx.range(f'cache_len={cached_length},try={j}'):
+            outputs = llm.generate(None, 
+                                sampling_params=sampling_params,
+                                prompt_token_ids=input_ids,
+                                use_tqdm=False)
         
         prefill_time = outputs[0].metrics.first_token_time - outputs[0].metrics.first_scheduled_time
         forward_time = outputs[0].metrics.model_forward_time
