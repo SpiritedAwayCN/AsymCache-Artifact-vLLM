@@ -60,7 +60,7 @@ def get_generation_time(llm, sampling_params, prompts):
 llm = LLM(
     model='meta-llama/Meta-Llama-3.1-8B-Instruct',
     enable_prefix_caching=True,
-    tensor_parallel_size=1,
+    tensor_parallel_size=2,
     disable_log_stats=False,
     enforce_eager=False,
 )
@@ -69,7 +69,7 @@ print(block_manager.__class__.__name__)
 # exit(0)
 
 block_manager.test_ignore_cache_block_start = 4
-block_manager.test_ignore_cache_block_num = 6
+block_manager.test_ignore_cache_block_num = 4
 
 sampling_params = SamplingParams(temperature=0, max_tokens=10)
 

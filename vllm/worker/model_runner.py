@@ -582,7 +582,9 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
                 inter_data.input_positions[seq_idx] = inter_data.input_positions[
                     seq_idx][uncomputed_start:inter_data.suffix_computed_block_locs[0]]
                 inter_data.query_lens[seq_idx] = \
-                    inter_data.suffix_computed_block_locs[0] - context_len
+                    inter_data.suffix_computed_block_locs[0] - uncomputed_start + \
+                    seq_len - inter_data.suffix_computed_block_locs[1]
+                    
             else:
                 inter_data.input_tokens[seq_idx] = inter_data.input_tokens[
                     seq_idx][uncomputed_start:]
@@ -728,34 +730,25 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
         create on-device tensors.
         """
         # Combine and flatten intermediate data.
-        input_tokens, input_tokens_s1, input_tokens_s2 = [], [], []
+        input_tokens = []
         for inter_data in self.inter_data_list:
-            if inter_data.is_prompt:
-                for cur_input_tokens in inter_data.input_tokens:
-                    input_tokens.extend(cur_input_tokens)
-                for cur_input_tokens in inter_data.input_tokens_seg2:
-                    input_tokens_s1.extend(cur_input_tokens)
-            else:
-                for cur_input_tokens in inter_data.input_tokens:
-                    input_tokens_s2.extend(cur_input_tokens)
-        input_tokens.extend(input_tokens_s1 + input_tokens_s2)
+            for cur_input_tokens in inter_data.input_tokens:
+                input_tokens.extend(cur_input_tokens)
+            for cur_input_tokens in inter_data.input_tokens_seg2:
+                input_tokens.extend(cur_input_tokens)
+        # print("input_tokens", len(input_tokens), input_tokens)
 
         if not input_tokens:
             # This may happen when all prefill requests hit
             # prefix caching and there is no decode request.
             return self.model_input_cls()
 
-        input_positions, input_positions_s1, input_positions_s2 = [], [], []
+        input_positions = []
         for inter_data in self.inter_data_list:
-            if inter_data.is_prompt:
-                for cur_input_positions in inter_data.input_positions:
-                    input_positions.extend(cur_input_positions)
-                for cur_input_positions in inter_data.input_positions_seg2:
-                    input_positions_s1.extend(cur_input_positions)
-            else:
-                for cur_input_positions in inter_data.input_positions:
-                    input_positions_s2.extend(cur_input_positions)
-        input_positions.extend(input_positions_s1 + input_positions_s2)
+            for cur_input_positions in inter_data.input_positions:
+                input_positions.extend(cur_input_positions)
+            for cur_input_positions in inter_data.input_positions_seg2:
+                input_positions.extend(cur_input_positions)
 
         seq_lens = []
         max_decode_seq_len = 0
