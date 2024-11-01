@@ -734,8 +734,9 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
         for inter_data in self.inter_data_list:
             for cur_input_tokens in inter_data.input_tokens:
                 input_tokens.extend(cur_input_tokens)
-            for cur_input_tokens in inter_data.input_tokens_seg2:
-                input_tokens.extend(cur_input_tokens)
+            if inter_data.is_prompt:
+                for cur_input_tokens in inter_data.input_tokens_seg2:
+                    input_tokens.extend(cur_input_tokens)
         # print("input_tokens", len(input_tokens), input_tokens)
 
         if not input_tokens:
@@ -747,8 +748,9 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
         for inter_data in self.inter_data_list:
             for cur_input_positions in inter_data.input_positions:
                 input_positions.extend(cur_input_positions)
-            for cur_input_positions in inter_data.input_positions_seg2:
-                input_positions.extend(cur_input_positions)
+            if inter_data.is_prompt:
+                for cur_input_positions in inter_data.input_positions_seg2:
+                    input_positions.extend(cur_input_positions)
 
         seq_lens = []
         max_decode_seq_len = 0
