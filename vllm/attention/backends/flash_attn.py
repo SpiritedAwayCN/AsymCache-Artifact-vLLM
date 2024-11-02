@@ -83,6 +83,7 @@ def flash_attn_varlen_2seg_func(
     seqused_k: Optional[torch.Tensor] = None,
     seqlens_q_firstseg: Optional[torch.Tensor] = None,
     out: Optional[torch.Tensor] = None,
+    force_kBlockM: int = 64,
 ) -> torch.Tensor:
     # custom op does not support tuple input
     real_window_size: Tuple[int, int]
@@ -108,6 +109,7 @@ def flash_attn_varlen_2seg_func(
         out=out,
         seqused_k=seqused_k,
         seqlens_q_firstseg=seqlens_q_firstseg,
+        force_kBlockM=force_kBlockM,
     )
 
 
@@ -288,7 +290,8 @@ class FlashAttentionMetadata(AttentionMetadata):
     use_cuda_graph: bool
     
     # MODIFIED for second segment cache
-    query_start_loc2: Optional[torch.Tensor] = None
+    seq_lens_firstseg: Optional[List[int]] = None
+    seq_lens_firstseg_tensor: Optional[torch.Tensor] = None
     # context_lens_tensor2: Optional[torch.Tensor]
     seq_used_k: Optional[torch.Tensor] = None
     # seq_start_loc2: Optional[torch.Tensor] = None
@@ -328,7 +331,8 @@ class FlashAttentionMetadata(AttentionMetadata):
             context_lens_tensor=self.context_lens_tensor[:self.num_prefills],
             block_tables=self.block_tables[:self.num_prefills],
             use_cuda_graph=False,
-            query_start_loc2=self.query_start_loc2,
+            seq_lens_firstseg=self.seq_lens_firstseg,
+            seq_lens_firstseg_tensor=self.seq_lens_firstseg_tensor,
             # context_lens_tensor2=None,
             seq_used_k=self.seq_used_k,
             # seq_start_loc2=self.seq_start_loc2,
@@ -362,7 +366,8 @@ class FlashAttentionMetadata(AttentionMetadata):
             context_lens_tensor=None,
             block_tables=self.block_tables[self.num_prefills:],
             use_cuda_graph=self.use_cuda_graph,
-            query_start_loc2=None,
+            seq_lens_firstseg=None,
+            seq_lens_firstseg_tensor=None,
             # context_lens_tensor2=None,
             seq_used_k=None,
             # seq_start_loc2=None,
@@ -552,7 +557,14 @@ class FlashAttentionMetadataBuilder(
         device = self.runner.device
         use_captured_graph = cuda_graph_pad_size != -1
 
+        # FOR KERNEL
+        # if cache_2seg:
+        #     max_query_len = max(map(lambda x, y: x + y, 
+        #                             query_lens, 
+        #                             [64 - num % 64 if num % 64 != 0 else 0 for num in query_lens_2]))
+        # else:
         max_query_len = max(query_lens)
+        
         max_prefill_seq_len = max(self.prefill_seq_lens, default=0)
         max_decode_seq_len = max(self.curr_seq_lens, default=0)
         num_decode_tokens = self.num_decode_tokens
@@ -604,7 +616,7 @@ class FlashAttentionMetadataBuilder(
                      out=query_start_loc[1:])
 
         if cache_2seg:
-            query_lens_tensor_2 = async_tensor_h2d(query_lens_2, torch.long, device,
+            seq_lens_firstseg_tensor = async_tensor_h2d(query_lens_2, torch.long, device,
                                                self.runner.pin_memory)
             seq_used_k_tensor = async_tensor_h2d(seq_used_k, torch.int, device,
                                                 self.runner.pin_memory)
@@ -624,7 +636,8 @@ class FlashAttentionMetadataBuilder(
                 context_lens_tensor=context_lens_tensor,
                 block_tables=block_tables,
                 use_cuda_graph=use_captured_graph,
-                query_start_loc2=query_lens_tensor_2,
+                seq_lens_firstseg=query_lens_2,
+                seq_lens_firstseg_tensor=seq_lens_firstseg_tensor,
                 seq_used_k=seq_used_k_tensor,
             )
 
@@ -822,7 +835,7 @@ class FlashAttentionImpl(AttentionImpl):
                 # prefix-enabled attention
                 assert prefill_meta.seq_lens is not None
                 
-                if prefill_meta.query_start_loc2 is None:
+                if prefill_meta.seq_lens_firstseg is None:
                     max_seq_len = max(prefill_meta.seq_lens)
                     
                     # print("prefix-enabled", f"prefill_meta: {prefill_meta}", flush=True)
@@ -844,8 +857,12 @@ class FlashAttentionImpl(AttentionImpl):
                 else:
                     # two segment cache
                     print("two-segment", f"prefill_meta: {prefill_meta}", flush=True)
-                    
                     max_seq_len = max(prefill_meta.seq_lens)
+                    force_kBlockM = min(map(lambda x: 16 if (x & 63)==48 else (x & 63), prefill_meta.seq_lens_firstseg))
+                    force_kBlockM = 64 if force_kBlockM == 0 else force_kBlockM
+                    # max_seq_len = max(map(lambda x, y: x + y, 
+                    #                       prefill_meta.seq_lens, 
+                    #                       [64 - num % 64 if num % 64 != 0 else 0 for num in prefill_meta.seq_lens_firstseg]))
                     # with torch.cuda.nvtx.range("flash_attn_varlen_func1"):
                     torch.ops.vllm.flash_attn_varlen_2seg_func(  # noqa
                         q=query,
@@ -861,15 +878,16 @@ class FlashAttentionImpl(AttentionImpl):
                         block_table=prefill_meta.block_tables,
                         softcap=self.logits_soft_cap,
                         seqused_k=prefill_meta.seq_used_k,
-                        seqlens_q_firstseg=prefill_meta.query_start_loc2,
+                        seqlens_q_firstseg=prefill_meta.seq_lens_firstseg_tensor,
                         out=output[:num_prefill_tokens],
+                        force_kBlockM=force_kBlockM,
                     )
                     
                     # for debug
                     torch.cuda.synchronize()
                     print("second segment done", flush=True)
-                    print(f"query index {0}: {query[0]}", flush=True)
-                    print(f"output index {0}: {output[0]}", flush=True)
+                    print(f"query index {80}: {query[80]}", flush=True)
+                    print(f"output index {80}: {output[80]}", flush=True)
 
         if decode_meta := attn_metadata.decode_metadata:
             # Decoding run.

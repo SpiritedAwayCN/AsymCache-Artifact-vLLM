@@ -55,10 +55,12 @@ def get_generation_time(llm, sampling_params, prompts):
     # print('log_stats', llm.llm_engine.log_stats)
     # llm.llm_engine.do_log_stats()
 
+# model_path = '/cpfs/29f69eb5e2e60f26/user/sft_intern/liyouquan/huggingface_models/Meta-Llama-3.1-8B-Instruct/'
+model_path = 'meta-llama/Meta-Llama-3.1-8B-Instruct'
 
 # set enable_prefix_caching=True to enable APC
 llm = LLM(
-    model='meta-llama/Meta-Llama-3.1-8B-Instruct',
+    model=model_path,
     enable_prefix_caching=True,
     tensor_parallel_size=2,
     disable_log_stats=False,
