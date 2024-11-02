@@ -856,10 +856,10 @@ class FlashAttentionImpl(AttentionImpl):
                         )
                 else:
                     # two segment cache
-                    print("two-segment", f"prefill_meta: {prefill_meta}", flush=True)
                     max_seq_len = max(prefill_meta.seq_lens)
                     force_kBlockM = min(map(lambda x: 16 if (x & 63)==48 else (x & 63), prefill_meta.seq_lens_firstseg))
                     force_kBlockM = 64 if force_kBlockM == 0 else force_kBlockM
+                    # print("two-segment", f"force_kBlockM: {force_kBlockM}", f"prefill_meta: {prefill_meta}", flush=True)
                     # max_seq_len = max(map(lambda x, y: x + y, 
                     #                       prefill_meta.seq_lens, 
                     #                       [64 - num % 64 if num % 64 != 0 else 0 for num in prefill_meta.seq_lens_firstseg]))
@@ -884,10 +884,10 @@ class FlashAttentionImpl(AttentionImpl):
                     )
                     
                     # for debug
-                    torch.cuda.synchronize()
-                    print("second segment done", flush=True)
-                    print(f"query index {80}: {query[80]}", flush=True)
-                    print(f"output index {80}: {output[80]}", flush=True)
+                    # torch.cuda.synchronize()
+                    # print("second segment done", flush=True)
+                    # print(f"query index {80}: {query[80]}", flush=True)
+                    # print(f"output index {80}: {output[80]}", flush=True)
 
         if decode_meta := attn_metadata.decode_metadata:
             # Decoding run.
