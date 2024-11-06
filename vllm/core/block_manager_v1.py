@@ -5,7 +5,7 @@ from itertools import count, takewhile
 from os.path import commonprefix
 from typing import Dict, List, Optional
 from typing import Sequence as GenericSequence
-from typing import Set, Tuple
+from typing import Set, Tuple, List
 
 from vllm.block import BlockTable, PhysicalTokenBlock
 from vllm.core.block.common import CacheMetricData
@@ -15,9 +15,11 @@ from vllm.core.interfaces import AllocStatus, BlockSpaceManager
 from vllm.logger import init_logger
 from vllm.sequence import Sequence, SequenceGroup, SequenceStatus
 from vllm.utils import Device
+# from vllm.core.utils import RefSeqTracker
 
 logger = init_logger(__name__)
 
+_tmp_x, _tmp_y = 0, 0
 
 class BlockAllocatorBase(ABC):
     """Manages free physical token blocks for a device.
@@ -110,7 +112,9 @@ class CachedBlockAllocator(BlockAllocatorBase):
 
     def allocate(self,
                  block_hash: Optional[int] = None,
-                 num_hashed_tokens: int = 0) -> PhysicalTokenBlock:
+                 num_hashed_tokens: int = 0,
+                 force_ignore_cache: bool = False) -> PhysicalTokenBlock:
+        global _tmp_x, _tmp_y
         if block_hash is None:
             block_hash = next(self.default_hash_ctr)
 
@@ -118,7 +122,21 @@ class CachedBlockAllocator(BlockAllocatorBase):
             assert block_hash not in self.cached_blocks
             block = self.evictor.remove(block_hash)
             assert block.ref_count == 0
-            self.cached_blocks[block_hash] = block
+            if force_ignore_cache:
+                import time
+                import random
+                block.computed = False
+                block.last_accessed = -1
+                block.ref_seqs.clear()
+                
+                while True:
+                    block.block_hash = hash((tuple([10 + _tmp_x] * 31), 0))
+                    _tmp_x += 1
+                    if block.block_hash not in self.evictor:
+                        break
+                self.evictor.add(block)
+            else:
+                self.cached_blocks[block_hash] = block
 
         if block_hash in self.cached_blocks:
             self.cache_metric_data.query(hit=True)
@@ -135,6 +153,7 @@ class CachedBlockAllocator(BlockAllocatorBase):
         if block.ref_count == 0:
             raise ValueError(f"Double free! {block} is already freed.")
         block.ref_count -= 1
+        # logger.info(f"Block {block.block_number} is being freed (refcnt={block.ref_count})")
         if block.ref_count == 0:
             assert block.block_hash not in self.evictor
             self.evictor.add(block)
@@ -237,6 +256,7 @@ class BlockSpaceManagerV1(BlockSpaceManager):
         watermark: float = 0.01,
         sliding_window: Optional[int] = None,
         enable_caching: bool = False,
+        # enable_seq_refactor: bool = False,
     ) -> None:
         self.block_size = block_size
         self.num_total_gpu_blocks = num_gpu_blocks
@@ -277,6 +297,14 @@ class BlockSpaceManagerV1(BlockSpaceManager):
         # Note that each SequenceGroup has a unique
         # request ID
         self.cross_block_tables: Dict[str, BlockTable] = {}
+        
+        self.test_ignore_cache_block_num: int = 0
+        self.test_ignore_cache_block_start: int = 0
+        
+        # if enable_seq_refactor:
+        #     logger.info("Sequence Refactor is enabled.")
+        #     self.seq_refactor = True
+        #     self.refseq_tracker = RefSeqTracker()
 
     def _get_seq_num_required_blocks(self, seq: Optional[Sequence]) -> int:
         return 0 if seq is None else seq.n_blocks
@@ -323,6 +351,8 @@ class BlockSpaceManagerV1(BlockSpaceManager):
 
         block_table: BlockTable = BlockTable()
         assert seq is not None
+        
+        segment_status = 0
         for logical_idx in range(num_prompt_blocks):
             if (self.block_sliding_window is not None
                     and logical_idx >= self.block_sliding_window):
@@ -332,12 +362,32 @@ class BlockSpaceManagerV1(BlockSpaceManager):
             elif not is_encoder_decoder and self.enable_caching:
                 block = self.gpu_allocator.allocate(
                     seq.hash_of_block(logical_idx),
-                    seq.num_hashed_tokens_of_block(logical_idx))
+                    seq.num_hashed_tokens_of_block(logical_idx),
+                    0 < logical_idx - self.test_ignore_cache_block_start <= self.test_ignore_cache_block_num)
+                # if self.seq_refactor:
+                #     self.refseq_tracker.add(block.block_hash, seq)
             else:
                 block = self.gpu_allocator.allocate()
                 # Set the reference counts of the token blocks.
                 block.ref_count = ref_count
+                # if self.seq_refactor:
+                #     self.refseq_tracker.add(block.block_hash, seq)
+            
+            if block.computed:
+                if segment_status == 1:
+                    segment_status += 1
+                    seq.suffix_computed_block_locs[0] = logical_idx * self.block_size
+            elif segment_status == 2:
+                segment_status += 1
+                seq.suffix_computed_block_locs[1] = logical_idx * self.block_size
+            elif segment_status == 0:
+                segment_status += 1
+            
             block_table.append(block)
+
+        if segment_status == 2:
+            seq.suffix_computed_block_locs[1] = logical_idx * self.block_size
+        logger.info(f"seq: {seq}, suffix_computed_block_locs: {seq.suffix_computed_block_locs}")
 
         return block_table
 
@@ -399,7 +449,11 @@ class BlockSpaceManagerV1(BlockSpaceManager):
         # and return the cached version
         if self.gpu_allocator.contains_block(new_hash):
             self.gpu_allocator.free(last_block)
-            return self.gpu_allocator.allocate(new_hash)
+            res = self.gpu_allocator.allocate(new_hash)
+            # if self.seq_refactor:
+            #     self.refseq_tracker.remove(seq, [last_block.block_number], Device.GPU)
+            #     self.refseq_tracker.add(res.block_number, seq)
+            return res
         else:
             self.gpu_allocator.update_hash(new_hash, last_block)
             return last_block
@@ -431,7 +485,10 @@ class BlockSpaceManagerV1(BlockSpaceManager):
         # None if the last block is not full. Otherwise, we set it to the
         # content hash.
         if not self.enable_caching:
-            return self.gpu_allocator.allocate()
+            new_block = self.gpu_allocator.allocate()
+            # if self.seq_refactor:
+            #     self.refseq_tracker.add(new_block.block_number, seq)
+            return new_block
         block_hash: Optional[int] = None
         n_blocks = seq.n_blocks
         if (self._is_last_block_full(seq)):
@@ -442,6 +499,8 @@ class BlockSpaceManagerV1(BlockSpaceManager):
         # (e.g. in the hashing function, it is used to ask the sequence for
         # prefix tokens)
         new_block = self.gpu_allocator.allocate(block_hash, num_hashed_tokens)
+        # if self.seq_refactor:
+        #     self.refseq_tracker.add(new_block.block_number, seq)
 
         # If the block_hash is None, then the block is not full.
         # If the block is not full, then we expect it to have a refcount of 1.
@@ -493,6 +552,8 @@ class BlockSpaceManagerV1(BlockSpaceManager):
 
             block_table[-1] = new_block
             self.gpu_allocator.free(last_block)
+            # if self.seq_refactor:
+            #     self.refseq_tracker.remove(seq, [last_block.block_number], Device.GPU)
             return [(last_block.block_number, new_block.block_number)]
 
     def fork(self, parent_seq: Sequence, child_seq: Sequence) -> None:
@@ -554,7 +615,8 @@ class BlockSpaceManagerV1(BlockSpaceManager):
             self, block_table: BlockTable, src_allocator: BlockAllocatorBase,
             dest_allocator: BlockAllocatorBase,
             mapping: Dict[PhysicalTokenBlock,
-                          PhysicalTokenBlock]) -> BlockTable:
+                          PhysicalTokenBlock],
+            seq: Optional[Sequence]) -> BlockTable:
         new_block_table: BlockTable = BlockTable()
 
         for from_block in block_table:
@@ -568,6 +630,16 @@ class BlockSpaceManagerV1(BlockSpaceManager):
             new_block_table.append(to_block)
             # Free the source block swapped in to destination.
             src_allocator.free(from_block)
+            
+        # if self.seq_refactor:
+        #     old_block_ids = map(lambda block: block.block_number, block_table)
+        #     new_block_ids = map(lambda block: block.block_number, new_block_table)
+        #     src_device = Device.CPU if src_allocator == self.cpu_allocator else Device.GPU
+        #     dst_device = Device.CPU if dest_allocator == self.cpu_allocator else Device.GPU
+            
+        #     self.refseq_tracker.add_all(new_block_ids, seq)
+        #     self.refseq_tracker.remove(seq, old_block_ids, src_device)
+            
 
         return new_block_table
 
@@ -582,7 +654,7 @@ class BlockSpaceManagerV1(BlockSpaceManager):
             self.block_tables[seq.seq_id] = \
                 self._swap_block_table(self.block_tables[seq.seq_id],
                                        self.cpu_allocator, self.gpu_allocator,
-                                       mapping)
+                                       mapping, seq)
 
         if seq_group.is_encoder_decoder():
             self.cross_block_tables[request_id] = \
@@ -640,6 +712,8 @@ class BlockSpaceManagerV1(BlockSpaceManager):
             # Already freed or haven't been scheduled yet.
             return
         block_table = self.block_tables[seq.seq_id]
+        # if self.seq_refactor:
+        #     self.refseq_tracker.remove(seq)
         self._free_block_table(block_table)
         del self.block_tables[seq.seq_id]
 
@@ -648,10 +722,15 @@ class BlockSpaceManagerV1(BlockSpaceManager):
             # Already freed or hasn't ben scheduled yet.
             return
         block_table = self.cross_block_tables[seq_group.request_id]
+        # if self.seq_refactor:
+        #     for seq in seq_group:
+        #         self.refseq_tracker.remove(seq)
         self._free_block_table(block_table)
         del self.cross_block_tables[seq_group.request_id]
 
     def reset(self) -> None:
+        # if self.seq_refactor:
+        #     self.refseq_tracker.reset()
         # Free decoder block tables
         for block_table in self.block_tables.values():
             self._free_block_table(block_table)
@@ -685,6 +764,7 @@ class BlockSpaceManagerV1(BlockSpaceManager):
             block_table = self.block_tables[seq.seq_id]
             for block in block_table:
                 block.last_accessed = access_time
+                block.ref_seqs.add(seq)
 
     def compute_full_blocks_in_seq(self, seq: Sequence, token_chunk_size: int):
         if seq.seq_id not in self.block_tables:
@@ -717,7 +797,9 @@ class BlockSpaceManagerV1(BlockSpaceManager):
         ]
 
     def get_common_computed_block_ids(
-            self, seqs: List[Sequence]) -> GenericSequence[int]:
+            self, 
+            seqs: List[Sequence], 
+            get_second_seg : bool = False) -> GenericSequence[int]:
         """Return the block ids that are common for a given sequence group.
 
         Used in prefill (can skip prefill of some blocks).
@@ -726,6 +808,12 @@ class BlockSpaceManagerV1(BlockSpaceManager):
         if not self.enable_caching:
             return []
 
+        if get_second_seg:
+            assert len(seqs) <= 1, "Only one sequence is allowed for second segment"
+            
+            ids_list = [self.get_all_computed_blocks(seq) for seq in seqs]
+        
+        
         ids_list = [self.get_all_computed_blocks(seq) for seq in seqs]
         return commonprefix([ids for ids in ids_list if ids != []])
 

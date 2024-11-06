@@ -201,6 +201,7 @@ class LLM:
         prompt_token_ids: Optional[List[int]] = None,
         use_tqdm: bool = True,
         lora_request: Optional[Union[List[LoRARequest], LoRARequest]] = None,
+        slo_urgents: Optional[Union[float, Sequence[float]]] = None,
     ) -> List[RequestOutput]:
         ...
 
@@ -213,6 +214,7 @@ class LLM:
         prompt_token_ids: Optional[List[List[int]]] = None,
         use_tqdm: bool = True,
         lora_request: Optional[Union[List[LoRARequest], LoRARequest]] = None,
+        slo_urgents: Optional[Union[float, Sequence[float]]] = None,
     ) -> List[RequestOutput]:
         ...
 
@@ -226,6 +228,7 @@ class LLM:
         prompt_token_ids: List[int],
         use_tqdm: bool = True,
         lora_request: Optional[Union[List[LoRARequest], LoRARequest]] = None,
+        slo_urgents: Optional[Union[float, Sequence[float]]] = None,
     ) -> List[RequestOutput]:
         ...
 
@@ -239,6 +242,7 @@ class LLM:
         prompt_token_ids: List[List[int]],
         use_tqdm: bool = True,
         lora_request: Optional[Union[List[LoRARequest], LoRARequest]] = None,
+        slo_urgents: Optional[Union[float, Sequence[float]]] = None,
     ) -> List[RequestOutput]:
         ...
 
@@ -250,6 +254,7 @@ class LLM:
         prompt_token_ids: Union[List[int], List[List[int]]],
         use_tqdm: bool = True,
         lora_request: Optional[Union[List[LoRARequest], LoRARequest]] = None,
+        slo_urgents: Optional[Union[float, Sequence[float]]] = None,
     ) -> List[RequestOutput]:
         ...
 
@@ -263,6 +268,7 @@ class LLM:
                                         Sequence[SamplingParams]]] = None,
         use_tqdm: bool = True,
         lora_request: Optional[Union[List[LoRARequest], LoRARequest]] = None,
+        slo_urgents: Optional[Union[float, Sequence[float]]] = None,
     ) -> List[RequestOutput]:
         ...
 
@@ -284,6 +290,7 @@ class LLM:
         guided_options_request: Optional[Union[LLMGuidedOptions,
                                                GuidedDecodingRequest]] = None,
         priority: Optional[List[int]] = None,
+        slo_urgents: Optional[Union[float, Sequence[float]]] = None,
     ) -> List[RequestOutput]:
         """Generates the completions for the input prompts.
 
@@ -348,7 +355,8 @@ class LLM:
             lora_request=lora_request,
             prompt_adapter_request=prompt_adapter_request,
             guided_options=guided_options_request,
-            priority=priority)
+            priority=priority,
+            slo_urgents=slo_urgents,)
 
         outputs = self._run_engine(use_tqdm=use_tqdm)
         return LLMEngine.validate_outputs(outputs, RequestOutput)
@@ -473,6 +481,7 @@ class LLM:
         continue_final_message: bool = False,
         tools: Optional[List[Dict[str, Any]]] = None,
         mm_processor_kwargs: Optional[Dict[str, Any]] = None,
+        slo_urgents: Optional[Union[float, Sequence[float]]] = None,
     ) -> List[RequestOutput]:
         """
         Generate responses for a chat conversation.
@@ -573,6 +582,7 @@ class LLM:
             sampling_params=sampling_params,
             use_tqdm=use_tqdm,
             lora_request=lora_request,
+            slo_urgents=slo_urgents,
         )
 
     @overload  # LEGACY: single (prompt + optional token ids)
@@ -584,6 +594,7 @@ class LLM:
         prompt_token_ids: Optional[List[int]] = None,
         use_tqdm: bool = True,
         lora_request: Optional[Union[List[LoRARequest], LoRARequest]] = None,
+        slo_urgents: Optional[Union[float, Sequence[float]]] = None,
     ) -> List[EmbeddingRequestOutput]:
         ...
 
@@ -596,6 +607,7 @@ class LLM:
         prompt_token_ids: Optional[List[List[int]]] = None,
         use_tqdm: bool = True,
         lora_request: Optional[Union[List[LoRARequest], LoRARequest]] = None,
+        slo_urgents: Optional[Union[float, Sequence[float]]] = None,
     ) -> List[EmbeddingRequestOutput]:
         ...
 
@@ -609,6 +621,7 @@ class LLM:
         prompt_token_ids: List[int],
         use_tqdm: bool = True,
         lora_request: Optional[Union[List[LoRARequest], LoRARequest]] = None,
+        slo_urgents: Optional[Union[float, Sequence[float]]] = None,
     ) -> List[EmbeddingRequestOutput]:
         ...
 
@@ -622,6 +635,7 @@ class LLM:
         prompt_token_ids: List[List[int]],
         use_tqdm: bool = True,
         lora_request: Optional[Union[List[LoRARequest], LoRARequest]] = None,
+        slo_urgents: Optional[Union[float, Sequence[float]]] = None,
     ) -> List[EmbeddingRequestOutput]:
         ...
 
@@ -633,6 +647,7 @@ class LLM:
         prompt_token_ids: Union[List[int], List[List[int]]],
         use_tqdm: bool = True,
         lora_request: Optional[Union[List[LoRARequest], LoRARequest]] = None,
+        slo_urgents: Optional[Union[float, Sequence[float]]] = None,
     ) -> List[EmbeddingRequestOutput]:
         ...
 
@@ -646,6 +661,7 @@ class LLM:
                                        Sequence[PoolingParams]]] = None,
         use_tqdm: bool = True,
         lora_request: Optional[Union[List[LoRARequest], LoRARequest]] = None,
+        slo_urgents: Optional[Union[float, Sequence[float]]] = None,
     ) -> List[EmbeddingRequestOutput]:
         ...
 
@@ -778,6 +794,7 @@ class LLM:
         prompt_adapter_request: Optional[PromptAdapterRequest],
         guided_options: Optional[GuidedDecodingRequest] = None,
         priority: Optional[List[int]] = None,
+        slo_urgents: Optional[Union[float, Sequence[float]]] = None,
     ) -> None:
         if guided_options is not None:
             warnings.warn(
@@ -799,6 +816,9 @@ class LLM:
                       list) and len(lora_request) != num_requests:
             raise ValueError("The lengths of prompts and lora_request "
                              "must be the same.")
+        if isinstance(slo_urgents, list) and len(slo_urgents) != num_requests:
+            raise ValueError("The lengths of prompts and slo_urgents "
+                             "must be the same.")
 
         for sp in params if isinstance(params, list) else (params, ):
             if isinstance(sp, SamplingParams):
@@ -816,6 +836,7 @@ class LLM:
                     lora_request, Sequence) else lora_request,
                 prompt_adapter_request=prompt_adapter_request,
                 priority=priority[i] if priority else 0,
+                slo_urgent=slo_urgents[i] if isinstance(slo_urgents, list) else slo_urgents,
             )
 
     def _add_request(
@@ -825,6 +846,7 @@ class LLM:
         lora_request: Optional[LoRARequest] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         priority: int = 0,
+        slo_urgent: float = 0.0,
     ) -> None:
         request_id = str(next(self.request_counter))
         self.llm_engine.add_request(
@@ -834,6 +856,7 @@ class LLM:
             lora_request=lora_request,
             prompt_adapter_request=prompt_adapter_request,
             priority=priority,
+            slo_urgent=slo_urgent,
         )
 
     def _add_guided_params(

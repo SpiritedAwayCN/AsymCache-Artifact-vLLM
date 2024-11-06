@@ -1,6 +1,7 @@
 """Attention layer with FlashAttention."""
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Type
+import itertools
 
 import torch
 
@@ -20,9 +21,9 @@ if TYPE_CHECKING:
     from vllm.worker.model_runner import (ModelInputForGPUBuilder,
                                           ModelInputForGPUWithSamplingMetadata)
 
-from vllm.vllm_flash_attn import (flash_attn_varlen_func,
-                                  flash_attn_with_kvcache)
-
+from vllm_flash_attn import flash_attn_varlen_func as _flash_attn_varlen_func
+from vllm_flash_attn import flash_attn_varlen_2seg_func as _flash_attn_varlen_2seg_func
+from vllm_flash_attn import flash_attn_with_kvcache as _flash_attn_with_kvcache
 
 class FlashAttentionBackend(AttentionBackend):
 
@@ -147,6 +148,15 @@ class FlashAttentionMetadata(AttentionMetadata):
     # Cuda-graph is currently enabled for decoding only.
     # TODO(woosuk): Move `use_cuda_graph` out since it's unrelated to attention.
     use_cuda_graph: bool
+    
+    # MODIFIED for second segment cache
+    seq_lens_firstseg: Optional[List[int]] = None
+    seq_lens_firstseg_tensor: Optional[torch.Tensor] = None
+    # context_lens_tensor2: Optional[torch.Tensor]
+    seq_used_k: Optional[torch.Tensor] = None
+    # seq_start_loc2: Optional[torch.Tensor] = None
+    # num_prefill_tokens_firstseg: int = 0
+    # max_query_len2: int = 0
 
     _cached_prefill_metadata: Optional["FlashAttentionMetadata"] = None
     _cached_decode_metadata: Optional["FlashAttentionMetadata"] = None
@@ -182,6 +192,13 @@ class FlashAttentionMetadata(AttentionMetadata):
             context_lens_tensor=self.context_lens_tensor[:self.num_prefills],
             block_tables=self.block_tables[:self.num_prefills],
             use_cuda_graph=False,
+            seq_lens_firstseg=self.seq_lens_firstseg,
+            seq_lens_firstseg_tensor=self.seq_lens_firstseg_tensor,
+            # context_lens_tensor2=None,
+            seq_used_k=self.seq_used_k,
+            # seq_start_loc2=self.seq_start_loc2,
+            # num_prefill_tokens_firstseg=self.num_prefill_tokens_firstseg,
+            # max_query_len2=self.max_query_len2,
         )
         return self._cached_prefill_metadata
 
@@ -211,6 +228,13 @@ class FlashAttentionMetadata(AttentionMetadata):
             context_lens_tensor=None,
             block_tables=self.block_tables[self.num_prefills:],
             use_cuda_graph=self.use_cuda_graph,
+            seq_lens_firstseg=None,
+            seq_lens_firstseg_tensor=None,
+            # context_lens_tensor2=None,
+            seq_used_k=None,
+            # seq_start_loc2=None,
+            # num_prefill_tokens_firstseg=0,
+            # max_query_len2=0,
         )
         return self._cached_decode_metadata
 
@@ -311,7 +335,7 @@ class FlashAttentionMetadataBuilder(
 
     def _add_seq_group(
             self, inter_data: "ModelInputForGPUBuilder.InterDataForSeqGroup",
-            chunked_prefill_enabled: bool, prefix_cache_hit: bool):
+            chunked_prefill_enabled: bool, prefix_cache_hit: bool,):
         """Add a sequence group to the metadata. Specifically update/append
         1. context length.
         2. block table.
@@ -321,16 +345,18 @@ class FlashAttentionMetadataBuilder(
         block_tables = inter_data.block_tables
 
         for (seq_id, token_len, seq_len, curr_seq_len, query_len, context_len,
-             curr_sliding_window_block) in zip(
+             curr_sliding_window_block, token_len_seg2) in itertools.zip_longest(
                  inter_data.seq_ids, [len(t) for t in inter_data.input_tokens],
                  inter_data.orig_seq_lens, inter_data.seq_lens,
                  inter_data.query_lens, inter_data.context_lens,
-                 inter_data.curr_sliding_window_blocks):
+                 inter_data.curr_sliding_window_blocks,
+                 [len(t) for t in inter_data.input_tokens_seg2] if inter_data.input_tokens_seg2 is not None else [],
+                 fillvalue=0):
             self.context_lens.append(context_len)
 
             if is_prompt:
                 self.num_prefills += 1
-                self.num_prefill_tokens += token_len
+                self.num_prefill_tokens += token_len + token_len_seg2
                 self.prefill_seq_lens.append(seq_len)
             else:
                 self.num_decode_tokens += query_len
@@ -359,9 +385,31 @@ class FlashAttentionMetadataBuilder(
             start_idx = compute_slot_mapping_start_idx(
                 is_prompt, query_len, context_len, self.sliding_window,
                 self.use_v2_block_manager)
-            compute_slot_mapping(is_profile_run, self.slot_mapping, seq_id,
-                                 seq_len, context_len, start_idx,
-                                 self.block_size, inter_data.block_tables)
+            
+            if inter_data.suffix_computed_block_locs is None or inter_data.suffix_computed_block_locs[1] <= 0:
+                # print('args of compute_slot_mapping',
+                #         f'is_profile_run: {is_profile_run}',
+                #         f'slot_mapping: {self.slot_mapping}',
+                #         f'seq_id: {seq_id}',
+                #         f'seq_len: {seq_len}',
+                #         f'context_len: {context_len}',
+                #         f'start_idx: {start_idx}',
+                #         f'block_size: {self.block_size}',
+                #         f'block_tables: {inter_data.block_tables}',
+                #         flush=True)
+                compute_slot_mapping(is_profile_run, self.slot_mapping, seq_id,
+                                    seq_len, context_len, start_idx,
+                                    self.block_size, inter_data.block_tables)
+            else:
+                assert inter_data.suffix_computed_block_locs[0] > 0, f"suffix_computed_block_locs: {inter_data.suffix_computed_block_locs}"
+                # assert is_prompt == True
+                compute_slot_mapping(is_profile_run, self.slot_mapping, seq_id,
+                                    inter_data.suffix_computed_block_locs[0], context_len, start_idx,
+                                    self.block_size, inter_data.block_tables)
+                compute_slot_mapping(is_profile_run, self.slot_mapping, seq_id,
+                                    seq_len, inter_data.suffix_computed_block_locs[1], start_idx,
+                                    self.block_size, inter_data.block_tables)
+            
 
     def _get_graph_runner_block_tables(
             self, num_seqs: int,
@@ -402,14 +450,30 @@ class FlashAttentionMetadataBuilder(
             inter_data.prefix_cache_hit
             for inter_data in self.input_builder.inter_data_list
         ])
+        
+        seq_used_k: List[int] = []
+        query_lens_2: List[int] = []
+        cache_2seg: bool = False
+        
         for inter_data in self.input_builder.inter_data_list:
             self._add_seq_group(inter_data,
                                 self.input_builder.chunked_prefill_enabled,
                                 prefix_cache_hit)
+            if inter_data.suffix_computed_block_locs is not None:
+                seq_used_k.append(inter_data.suffix_computed_block_locs[0])
+                query_lens_2.append(len(inter_data.input_positions[0]))
+                cache_2seg = True if inter_data.suffix_computed_block_locs[1] > 0 else cache_2seg
+                # print(f"suffix_computed_block_locs: {inter_data.suffix_computed_block_locs}, val: {val}", flush=True)
 
         device = self.runner.device
         use_captured_graph = cuda_graph_pad_size != -1
 
+        # FOR KERNEL
+        # if cache_2seg:
+        #     max_query_len = max(map(lambda x, y: x + y, 
+        #                             query_lens, 
+        #                             [64 - num % 64 if num % 64 != 0 else 0 for num in query_lens_2]))
+        # else:
         max_query_len = max(query_lens)
         decode_query_lens = query_lens[self.num_prefills:]
         if len(decode_query_lens) > 0:
@@ -459,6 +523,32 @@ class FlashAttentionMetadataBuilder(
                      dim=0,
                      dtype=query_start_loc.dtype,
                      out=query_start_loc[1:])
+
+        if cache_2seg:
+            seq_lens_firstseg_tensor = async_tensor_h2d(query_lens_2, torch.long, device,
+                                               self.runner.pin_memory)
+            seq_used_k_tensor = async_tensor_h2d(seq_used_k, torch.int, device,
+                                                self.runner.pin_memory)
+            # print('new meta builder', flush=True)
+            return FlashAttentionMetadata(
+                num_prefills=self.num_prefills,
+                slot_mapping=slot_mapping_tensor,
+                num_prefill_tokens=self.num_prefill_tokens,
+                num_decode_tokens=num_decode_tokens,
+                seq_lens=seq_lens,
+                seq_lens_tensor=seq_lens_tensor,
+                max_query_len=max_query_len,
+                max_prefill_seq_len=max_prefill_seq_len,
+                max_decode_seq_len=max_decode_seq_len,
+                query_start_loc=query_start_loc,
+                seq_start_loc=seq_start_loc,
+                context_lens_tensor=context_lens_tensor,
+                block_tables=block_tables,
+                use_cuda_graph=use_captured_graph,
+                seq_lens_firstseg=query_lens_2,
+                seq_lens_firstseg_tensor=seq_lens_firstseg_tensor,
+                seq_used_k=seq_used_k_tensor,
+            )
 
         return FlashAttentionMetadata(
             num_prefills=self.num_prefills,
@@ -671,15 +761,15 @@ def unified_flash_attention(
 
     prefill_output: Optional[torch.Tensor] = None
     decode_output: Optional[torch.Tensor] = None
-
+    
     if prefill_meta := attn_metadata.prefill_metadata:
         # Prompt run.
-        if (kv_cache.numel() == 0 or prefill_meta.block_tables is None
+        if (kv_cache is None or prefill_meta.block_tables is None
                 or prefill_meta.block_tables.numel() == 0):
             # normal attention
             # When block_tables are not filled, it means q and k are the
             # prompt, and they have the same length.
-            prefill_output = flash_attn_varlen_func(
+            prefill_output = _flash_attn_varlen_func(
                 q=query,
                 k=key,
                 v=value,
@@ -693,31 +783,75 @@ def unified_flash_attention(
                 alibi_slopes=alibi_slopes,
                 softcap=logits_soft_cap,
             )
+            
+            # torch.cuda.synchronize()
+            # print("q[80]: ", query[80], flush=True)
+            # print("q[1383]: ", query[1383], flush=True)
+            # print("output index 80: ", output[80], flush=True)
+            # print("output index 1383: ", output[1383], flush=True)
         else:
             # prefix-enabled attention
+            
             assert prefill_meta.seq_lens is not None
-            max_seq_len = max(prefill_meta.seq_lens)
-            prefill_output = flash_attn_varlen_func(  # noqa
-                q=query,
-                k=key_cache,
-                v=value_cache,
-                cu_seqlens_q=prefill_meta.query_start_loc,
-                max_seqlen_q=prefill_meta.max_query_len,
-                cu_seqlens_k=prefill_meta.seq_start_loc,
-                max_seqlen_k=max_seq_len,
-                softmax_scale=softmax_scale,
-                causal=True,
-                alibi_slopes=alibi_slopes,
-                block_table=prefill_meta.block_tables,
-                softcap=logits_soft_cap,
-            )
+            
+            if prefill_meta.seq_lens_firstseg is None:
+                max_seq_len = max(prefill_meta.seq_lens)
+                
+                # print("prefix-enabled", f"prefill_meta: {prefill_meta}", flush=True)
+                prefill_output = _flash_attn_varlen_func(  # noqa
+                    q=query,
+                    k=key_cache,
+                    v=value_cache,
+                    cu_seqlens_q=prefill_meta.query_start_loc,
+                    max_seqlen_q=prefill_meta.max_query_len,
+                    cu_seqlens_k=prefill_meta.seq_start_loc,
+                    max_seqlen_k=max_seq_len,
+                    softmax_scale=softmax_scale,
+                    causal=True,
+                    alibi_slopes=alibi_slopes,
+                    block_table=prefill_meta.block_tables,
+                    softcap=logits_soft_cap,
+                )
+            else:
+                # two segment cache
+                max_seq_len = max(prefill_meta.seq_lens)
+                force_kBlockM = min(map(lambda x: 16 if (x & 63)==48 else (x & 63), prefill_meta.seq_lens_firstseg))
+                force_kBlockM = 64 if force_kBlockM == 0 else force_kBlockM
+                # print("two-segment", f"force_kBlockM: {force_kBlockM}", f"prefill_meta: {prefill_meta}", flush=True)
+                # max_seq_len = max(map(lambda x, y: x + y, 
+                #                       prefill_meta.seq_lens, 
+                #                       [64 - num % 64 if num % 64 != 0 else 0 for num in prefill_meta.seq_lens_firstseg]))
+                # with torch.cuda.nvtx.range("flash_attn_varlen_func1"):
+                prefill_output = _flash_attn_varlen_2seg_func(  # noqa
+                    q=query,
+                    k=key_cache,
+                    v=value_cache,
+                    cu_seqlens_q=prefill_meta.query_start_loc,
+                    max_seqlen_q=prefill_meta.max_query_len,
+                    cu_seqlens_k=prefill_meta.seq_start_loc,
+                    max_seqlen_k=max_seq_len,
+                    softmax_scale=softmax_scale,
+                    causal=True,
+                    alibi_slopes=alibi_slopes,
+                    block_table=prefill_meta.block_tables,
+                    softcap=logits_soft_cap,
+                    seqused_k=prefill_meta.seq_used_k,
+                    seqlens_q_firstseg=prefill_meta.seq_lens_firstseg_tensor,
+                    force_kBlockM=force_kBlockM,
+                )
+                    
+                # for debug
+                # torch.cuda.synchronize()
+                # print("second segment done", flush=True)
+                # print(f"query index {80}: {query[80]}", flush=True)
+                # print(f"output index {80}: {output[80]}", flush=True)
 
     if decode_meta := attn_metadata.decode_metadata:
         # Decoding run.
         _, num_head, head_dim = decode_query.shape
         decode_query = decode_query.reshape(-1, decode_meta.decode_query_len,
                                             num_head, head_dim)
-        decode_output = flash_attn_with_kvcache(
+        decode_output = _flash_attn_with_kvcache(
             q=decode_query,
             k_cache=key_cache,
             v_cache=value_cache,

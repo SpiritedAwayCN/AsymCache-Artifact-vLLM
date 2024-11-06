@@ -107,6 +107,7 @@ class ModelInputForGPU(ModelRunnerInputBase):
     async_callback: Optional[Callable] = None
     seq_group_metadata_list: Optional[List[SequenceGroupMetadata]] = None
     scheduler_outputs: Optional[SchedulerOutputs] = None
+    suffix_computed_block_locs: Optional[List[int]] = None
 
     def as_broadcastable_tensor_dict(self) -> Dict[str, Any]:
         tensor_dict = {
@@ -247,6 +248,12 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
             reinit: bool = False,
             reinit_use_defaults: bool = False,
             encoder_seq_len: int = 0,
+            
+            # MODIFIED: For cache segment in the middle
+            suffix_computed_block_locs: List[int] = [0, 0],
+            input_tokens_seg2: Optional[List[List[int]]] = None,
+            input_positions_seg2: Optional[List[List[int]]] = None,
+            # query_lens_seg2: Optional[List[int]] = None,
         ):
             if reinit:
                 assert len(self.seq_ids) == len(seq_ids)  # type: ignore
@@ -338,6 +345,24 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
                     else:
                         self.prompt_adapter_prompt_mapping.clear()
 
+                    # MODIFIED: For cache segment in the middle
+                    if input_tokens_seg2:
+                        self.input_tokens_seg2 = input_tokens_seg2
+                    else:
+                        for seq_id in range(len(self.seq_ids)):
+                            self.input_tokens_seg2[seq_id].clear()
+                    
+                    if input_positions_seg2:
+                        self.input_positions_seg2 = input_positions_seg2
+                    else:
+                        for seq_id in range(len(self.seq_ids)):
+                            self.input_positions_seg2[seq_id].clear()
+                    
+                    # if query_lens_seg2:
+                    #     self.query_lens_seg2 = query_lens_seg2
+                    # else:
+                    #     for seq_id in range(len(self.seq_ids)):
+                    #         self.query_lens_seg2[seq_id] = 0
             else:
                 self.input_tokens = input_tokens or []
                 self.input_positions = input_positions or []
@@ -357,10 +382,19 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
                     prompt_adapter_index_mapping or [])
                 self.prompt_adapter_prompt_mapping = (
                     prompt_adapter_prompt_mapping or [])
+                
+                # MODIFIED: For cache segment in the middle
+                self.input_tokens_seg2 = input_tokens_seg2 or []
+                self.input_positions_seg2 = input_positions_seg2 or []
+                # self.query_lens_seg2 = query_lens_seg2 or []
 
             self.prompt_adapter_request = prompt_adapter_request
             self.multi_modal_inputs = multi_modal_inputs
             self.prefix_cache_hit = prefix_cache_hit
+            
+            # MODIFIED: For cache segment in the middle
+            # self.suffix_cache_hit = suffix_computed_block_locs
+            self.suffix_computed_block_locs = suffix_computed_block_locs
 
             self.n_seqs = len(self.seq_ids)
 
@@ -381,6 +415,11 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
 
             self.lora_index_mapping = []
             self.lora_prompt_mapping = []
+            
+            # MODIFIED: For cache segment in the middle
+            self.input_tokens_seg2 = [[] for _ in range(self.n_seqs)]
+            self.input_positions_seg2 = [[] for _ in range(self.n_seqs)]
+            # self.query_lens_seg2 = [0] * self.n_seqs
 
     def gen_inter_data_builder(self, num_seqs: int):
         return lambda: ModelInputForGPUBuilder.InterDataForSeqGroup(
@@ -539,16 +578,32 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
             pass
         elif context_len < prefix_cache_len < seq_len:
             # Partial hit. Compute the missing part.
+            
             uncomputed_start = prefix_cache_len - context_len
-            inter_data.input_tokens[seq_idx] = inter_data.input_tokens[
-                seq_idx][uncomputed_start:]
-            inter_data.input_positions[seq_idx] = inter_data.input_positions[
-                seq_idx][uncomputed_start:]
             context_len = prefix_cache_len
+            
+            if inter_data.suffix_computed_block_locs[0] > 0:
+                inter_data.input_tokens_seg2[seq_idx] = inter_data.input_tokens[
+                    seq_idx][inter_data.suffix_computed_block_locs[1]:]
+                inter_data.input_positions_seg2[seq_idx] = inter_data.input_positions[
+                    seq_idx][inter_data.suffix_computed_block_locs[1]:]
+                inter_data.input_tokens[seq_idx] = inter_data.input_tokens[
+                    seq_idx][uncomputed_start:inter_data.suffix_computed_block_locs[0]]
+                inter_data.input_positions[seq_idx] = inter_data.input_positions[
+                    seq_idx][uncomputed_start:inter_data.suffix_computed_block_locs[0]]
+                inter_data.query_lens[seq_idx] = \
+                    inter_data.suffix_computed_block_locs[0] - uncomputed_start + \
+                    seq_len - inter_data.suffix_computed_block_locs[1]
+                    
+            else:
+                inter_data.input_tokens[seq_idx] = inter_data.input_tokens[
+                    seq_idx][uncomputed_start:]
+                inter_data.input_positions[seq_idx] = inter_data.input_positions[
+                    seq_idx][uncomputed_start:]
+                inter_data.query_lens[
+                    seq_idx] = inter_data.seq_lens[seq_idx] - context_len
 
             inter_data.context_lens[seq_idx] = context_len
-            inter_data.query_lens[
-                seq_idx] = inter_data.seq_lens[seq_idx] - context_len
         elif seq_len <= prefix_cache_len:
             # Full hit. Only compute the last token to avoid
             # erroneous behavior. FIXME: Ideally we should directly
@@ -705,7 +760,8 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
             computed_block_nums=seq_group_metadata.computed_block_nums,
             reinit=True,
             reinit_use_defaults=True,
-            encoder_seq_len=encoder_seq_len)
+            encoder_seq_len=encoder_seq_len,
+            suffix_computed_block_locs=seq_group_metadata.suffix_computed_block_locs,)
 
         self.inter_data_list.append(inter_data)
 
@@ -782,6 +838,10 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
         for inter_data in self.inter_data_list:
             for cur_input_tokens in inter_data.input_tokens:
                 input_tokens.extend(cur_input_tokens)
+            if inter_data.is_prompt:
+                for cur_input_tokens in inter_data.input_tokens_seg2:
+                    input_tokens.extend(cur_input_tokens)
+        # print("input_tokens", len(input_tokens), input_tokens)
 
         if not input_tokens:
             # This may happen when all prefill requests hit
@@ -809,6 +869,9 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
             for inter_data in self.inter_data_list:
                 for cur_input_positions in inter_data.input_positions:
                     input_positions.extend(cur_input_positions)
+                if inter_data.is_prompt:
+                    for cur_input_positions in inter_data.input_positions_seg2:
+                        input_positions.extend(cur_input_positions)
 
         seq_lens = []
         query_lens = []
