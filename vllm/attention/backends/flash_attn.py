@@ -21,9 +21,9 @@ if TYPE_CHECKING:
     from vllm.worker.model_runner import (ModelInputForGPUBuilder,
                                           ModelInputForGPUWithSamplingMetadata)
 
-from vllm_flash_attn import flash_attn_varlen_func as _flash_attn_varlen_func
-from vllm_flash_attn import flash_attn_varlen_2seg_func as _flash_attn_varlen_2seg_func
-from vllm_flash_attn import flash_attn_with_kvcache as _flash_attn_with_kvcache
+from vllm.vllm_flash_attn import flash_attn_varlen_func as _flash_attn_varlen_func
+from vllm.vllm_flash_attn import flash_attn_varlen_2seg_func as _flash_attn_varlen_2seg_func
+from vllm.vllm_flash_attn import flash_attn_with_kvcache as _flash_attn_with_kvcache
 
 class FlashAttentionBackend(AttentionBackend):
 
@@ -538,6 +538,7 @@ class FlashAttentionMetadataBuilder(
                 seq_lens=seq_lens,
                 seq_lens_tensor=seq_lens_tensor,
                 max_query_len=max_query_len,
+                decode_query_len=decode_query_len,
                 max_prefill_seq_len=max_prefill_seq_len,
                 max_decode_seq_len=max_decode_seq_len,
                 query_start_loc=query_start_loc,

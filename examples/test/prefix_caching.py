@@ -65,6 +65,7 @@ llm = LLM(
     tensor_parallel_size=2,
     disable_log_stats=False,
     enforce_eager=False,
+    enable_chunked_prefill=False,
 )
 block_manager = llm.llm_engine.scheduler[0].block_manager
 print(block_manager.__class__.__name__)
