@@ -156,7 +156,21 @@ class cmake_build_ext(build_ext):
         # Pass the python path to cmake so it can reuse the build dependencies
         # on subsequent calls to python.
         cmake_args += ['-DVLLM_PYTHON_PATH={}'.format(":".join(sys.path))]
-
+        # -DCUDA_INCLUDE_DIRS=/usr/local/cuda-12.4/include
+        cmake_args += ['-DCUDA_INCLUDE_DIRS={}'.format(CUDA_HOME + "/include")]
+        cmake_args += ['-DCUDA_TOOLKIT_ROOT_DIR={}'.format(CUDA_HOME)]
+        # cmake -DNVTOOLSEXT_LIBRARIES=/usr/local/cuda/lib64/libnvToolsExt.so ..
+        cmake_args += [
+            '-DNVTOOLSEXT_LIBRARIES={}'.format(CUDA_HOME + "/lib64/libnvToolsExt.so")
+        ]
+        # -DNVTOOLSEXT_INCLUDE_DIR=/usr/local/cuda/include
+        cmake_args += [
+            '-DNVTOOLSEXT_INCLUDE_DIR={}'.format(CUDA_HOME + "/include")
+        ]
+        # -DCMAKE_LIBRARY_PATH="/usr/local/cuda/lib64"
+        cmake_args += [
+            '-DCMAKE_LIBRARY_PATH={}'.format(CUDA_HOME + "/lib64")
+        ]
         #
         # Setup parallelism and build tool
         #
