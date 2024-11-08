@@ -81,7 +81,7 @@ class CachedBlockAllocator(BlockAllocatorBase):
                  device: Device,
                  block_size: int,
                  num_blocks: int,
-                 eviction_policy: EvictionPolicy = EvictionPolicy.LRU) -> None:
+                 eviction_policy: EvictionPolicy = EvictionPolicy.LRU2) -> None:
         self.device = device
         self.block_size = block_size
         self.num_blocks = num_blocks
@@ -127,7 +127,7 @@ class CachedBlockAllocator(BlockAllocatorBase):
                 import random
                 block.computed = False
                 block.last_accessed = -1
-                block.ref_seqs.clear()
+                # block.ref_seqs.clear()
                 
                 while True:
                     block.block_hash = hash((tuple([10 + _tmp_x] * 31), 0))
@@ -352,7 +352,7 @@ class BlockSpaceManagerV1(BlockSpaceManager):
         block_table: BlockTable = BlockTable()
         assert seq is not None
         
-        segment_status = 0
+        segment_status, fitst_compute_start = 0, 0
         for logical_idx in range(num_prompt_blocks):
             if (self.block_sliding_window is not None
                     and logical_idx >= self.block_sliding_window):
@@ -373,21 +373,27 @@ class BlockSpaceManagerV1(BlockSpaceManager):
                 # if self.seq_refactor:
                 #     self.refseq_tracker.add(block.block_hash, seq)
             
+            
             if block.computed:
                 if segment_status == 1:
-                    segment_status += 1
-                    seq.suffix_computed_block_locs[0] = logical_idx * self.block_size
+                    if (logical_idx - fitst_compute_start & 3) == 0:
+                        # multiple of 64
+                        segment_status += 1
+                        seq.suffix_computed_block_locs[0] = logical_idx * self.block_size
+                    else:
+                        block.computed = False # ignore cache
             elif segment_status == 2:
                 segment_status += 1
                 seq.suffix_computed_block_locs[1] = logical_idx * self.block_size
             elif segment_status == 0:
                 segment_status += 1
+                fitst_compute_start = logical_idx
             
             block_table.append(block)
 
         if segment_status == 2:
             seq.suffix_computed_block_locs[1] = logical_idx * self.block_size
-        logger.info(f"seq: {seq}, suffix_computed_block_locs: {seq.suffix_computed_block_locs}")
+        # logger.info(f"seq: {seq}, suffix_computed_block_locs: {seq.suffix_computed_block_locs}")
 
         return block_table
 
@@ -764,7 +770,7 @@ class BlockSpaceManagerV1(BlockSpaceManager):
             block_table = self.block_tables[seq.seq_id]
             for block in block_table:
                 block.last_accessed = access_time
-                block.ref_seqs.add(seq)
+                # block.ref_seqs.add(seq)
 
     def compute_full_blocks_in_seq(self, seq: Sequence, token_chunk_size: int):
         if seq.seq_id not in self.block_tables:

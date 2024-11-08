@@ -7,6 +7,9 @@ from vllm.logger import init_logger
 
 logger = init_logger(__name__)
 
+# timestamp_thres_n = 2
+prefix_thres_tokens = 96
+
 class EvictionPolicy(enum.Enum):
     """Enum for eviction policy used by make_evictor to instantiate the correct
        Evictor subclass.
@@ -127,6 +130,8 @@ class LRU2Evictor(Evictor):
     """
 
     def __init__(self):
+        logger.info("LRU2Evictor is used.")
+        self.has_evicted = False
         self.free_table: OrderedDict[int, PhysicalTokenBlock] = OrderedDict()
 
     def __contains__(self, block_hash: int) -> bool:
@@ -141,15 +146,22 @@ class LRU2Evictor(Evictor):
         # at the start of OrderedDict. Loop through all these blocks to
         # find the one with maximum number of hashed tokens.
         for _, block in self.free_table.items():
+            if not self.has_evicted:
+                logger.info(f"Block {block.block_number} (nht={block.num_hashed_tokens}) is being considered for eviction")
             if evicted_block.last_accessed < block.last_accessed:
                 break
+            # if (evicted_block.num_hashed_tokens < block.num_hashed_tokens \
+            #         and block.num_hashed_tokens <= prefix_thres_tokens) \
+            #     or (evicted_block.num_hashed_tokens > block.num_hashed_tokens \
+            #         and block.num_hashed_tokens > prefix_thres_tokens):
             if evicted_block.num_hashed_tokens < block.num_hashed_tokens:
                 evicted_block = block
 
         self.free_table.pop(evicted_block.block_hash)
 
         evicted_block.computed = False
-        evicted_block.ref_seqs.clear()
+        self.has_evicted = True
+        # evicted_block.ref_seqs.clear()
         return evicted_block
 
     def add(self, block: PhysicalTokenBlock):
