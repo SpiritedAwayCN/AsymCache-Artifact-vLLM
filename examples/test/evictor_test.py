@@ -16,13 +16,17 @@ logger = logging.getLogger(__name__)
 data_path = '/processing_data/infra/sca/sysbench/datas/system_benchmark_eval_datas.json'
 data = json.load(open(data_path, 'r', encoding='utf-8'))
 
+# LargeWorldModel/LWM-Text-1M
+# meta-llama/Meta-Llama-3.1-8B-Instruct
 llm = LLM(
-    model='meta-llama/Meta-Llama-3.1-8B-Instruct',
+    model='LargeWorldModel/LWM-Text-1M',
     enable_prefix_caching=True,
-    tensor_parallel_size=1,
+    tensor_parallel_size=2,
     disable_log_stats=False,
     enable_chunked_prefill=False,
     collect_detailed_traces='all',
+    max_model_len=210854,
+    gpu_memory_utilization=0.95
 )
 
 N_ENTRY = 500

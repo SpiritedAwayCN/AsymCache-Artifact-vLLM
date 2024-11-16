@@ -201,6 +201,9 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
             self.lora_requests.clear()  # type: ignore
             self.prompt_adapter_index_mapping.clear()  # type: ignore
             self.prompt_adapter_prompt_mapping.clear()  # type: ignore
+            
+            self.input_tokens_seg2[0].clear()  # type: ignore
+            self.input_positions_seg2[0].clear()  # type: ignore
 
         def __init__(
             self,

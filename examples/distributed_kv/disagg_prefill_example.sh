@@ -18,7 +18,7 @@ fi
 wait_for_server() {
   local port=$1
   timeout 1200 bash -c "
-    until curl -s localhost:${port}/v1/completions > /dev/null; do
+    until curl -s ${VLLM_HOST_IP}:${port}/v1/completions > /dev/null; do
       sleep 1
     done" && return 0 || return 1
 }

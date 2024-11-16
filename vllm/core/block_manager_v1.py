@@ -256,6 +256,7 @@ class BlockSpaceManagerV1(BlockSpaceManager):
         watermark: float = 0.01,
         sliding_window: Optional[int] = None,
         enable_caching: bool = False,
+        evictor_policy: EvictionPolicy = EvictionPolicy.LRU2,
         # enable_seq_refactor: bool = False,
     ) -> None:
         self.block_size = block_size
@@ -282,9 +283,9 @@ class BlockSpaceManagerV1(BlockSpaceManager):
         if self.enable_caching:
             logger.info("Automatic prefix caching is enabled.")
             self.gpu_allocator: BlockAllocatorBase = CachedBlockAllocator(
-                Device.GPU, block_size, num_gpu_blocks)
+                Device.GPU, block_size, num_gpu_blocks, evictor_policy)
             self.cpu_allocator: BlockAllocatorBase = CachedBlockAllocator(
-                Device.CPU, block_size, num_cpu_blocks)
+                Device.CPU, block_size, num_cpu_blocks, evictor_policy)
         else:
             self.gpu_allocator = UncachedBlockAllocator(
                 Device.GPU, block_size, num_gpu_blocks)
@@ -383,17 +384,19 @@ class BlockSpaceManagerV1(BlockSpaceManager):
                     else:
                         block.computed = False # ignore cache
             elif segment_status == 2:
-                segment_status += 1
+                segment_status = 3
                 seq.suffix_computed_block_locs[1] = logical_idx * self.block_size
             elif segment_status == 0:
-                segment_status += 1
+                segment_status = 1
                 fitst_compute_start = logical_idx
             
             block_table.append(block)
 
         if segment_status == 2:
             seq.suffix_computed_block_locs[1] = logical_idx * self.block_size
-        # logger.info(f"seq: {seq}, suffix_computed_block_locs: {seq.suffix_computed_block_locs}")
+        logger.info(f"seq: {seq}, "
+                    f"suffix_computed_block_locs: {seq.suffix_computed_block_locs}, "
+                    f"first_compute_start: {fitst_compute_start}")
 
         return block_table
 
