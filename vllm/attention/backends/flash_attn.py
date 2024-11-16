@@ -5,6 +5,7 @@ import itertools
 
 import torch
 
+from vllm.logger import init_logger
 from vllm import _custom_ops as ops
 from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
                                               AttentionMetadata,
@@ -24,6 +25,8 @@ if TYPE_CHECKING:
 from vllm.vllm_flash_attn import flash_attn_varlen_func as _flash_attn_varlen_func
 from vllm.vllm_flash_attn import flash_attn_varlen_2seg_func as _flash_attn_varlen_2seg_func
 from vllm.vllm_flash_attn import flash_attn_with_kvcache as _flash_attn_with_kvcache
+
+logger = init_logger(__name__)
 
 class FlashAttentionBackend(AttentionBackend):
 
@@ -358,6 +361,17 @@ class FlashAttentionMetadataBuilder(
                 self.num_prefills += 1
                 self.num_prefill_tokens += token_len + token_len_seg2
                 self.prefill_seq_lens.append(seq_len)
+                logger.info(
+                    f'seq_id: {seq_id}, '
+                    f'token_len: {token_len}, '
+                    f'token_len_seg2: {token_len_seg2}, '
+                    f'seq_len: {seq_len}, '
+                    f'query_len: {query_len}, '
+                    f'context_len: {context_len}, '
+                    f'curr_seq_len: {curr_seq_len}, '
+                    f'curr_sliding_window_block: {curr_sliding_window_block}, '
+                    f'suffix_computed_block_locs: {inter_data.suffix_computed_block_locs}, ',
+                )
             else:
                 self.num_decode_tokens += query_len
                 self.curr_seq_lens.append(curr_seq_len)

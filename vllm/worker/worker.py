@@ -229,6 +229,7 @@ class Worker(LocalOrDistributedWorkerBase):
         # NOTE(woosuk): Here we assume that the other processes using the same
         # GPU did not change their memory usage during the profiling.
         peak_memory = self.init_gpu_memory - free_gpu_memory
+        print(f"Peak memory: {peak_memory}, {total_gpu_memory * self.cache_config.gpu_memory_utilization -peak_memory}")
         assert peak_memory > 0, (
             "Error in memory profiling. "
             f"Initial free memory {self.init_gpu_memory}, current free memory"

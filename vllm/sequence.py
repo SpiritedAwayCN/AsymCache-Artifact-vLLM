@@ -119,6 +119,7 @@ class RequestMetrics:
     scheduler_time: Optional[float] = None
     model_forward_time: Optional[float] = None
     model_execute_time: Optional[float] = None
+    prefill_forward_time: Optional[float] = None
 
 
 class SequenceDataDelta(

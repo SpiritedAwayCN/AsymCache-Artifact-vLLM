@@ -1119,6 +1119,10 @@ class LLMEngine:
                         else:
                             seq_group.metrics.model_execute_time = (
                                 o.model_execute_time)
+                        if seq_group.metrics.prefill_forward_time is None:
+                            # The first output is the prefill output
+                            seq_group.metrics.prefill_forward_time = (
+                                o.model_forward_time)
 
             if self.model_config.embedding_mode:
                 self._process_sequence_group_outputs(seq_group, output)
