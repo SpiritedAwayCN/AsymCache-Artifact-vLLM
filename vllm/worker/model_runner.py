@@ -1679,7 +1679,6 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
     ) -> Optional[Union[List[SamplerOutput], IntermediateTensors]]:
         if num_steps > 1:
             raise ValueError("num_steps > 1 is not supported in ModelRunner")
-
         if self.lora_config:
             assert model_input.lora_requests is not None
             assert model_input.lora_mapping is not None

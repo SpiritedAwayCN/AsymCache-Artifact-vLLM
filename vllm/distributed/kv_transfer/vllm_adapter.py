@@ -166,6 +166,7 @@ class KV_transfer_agent:
         # query_lens contains new KV caches that are added to vLLM.
         # so we will send them to decode instance
         # FIXME(Kuntai): This assume that all requests are prefill.
+
         for idx, slen in enumerate(seq_lens):
             start_pos = sum(seq_lens[:idx])
             end_pos = start_pos + slen
