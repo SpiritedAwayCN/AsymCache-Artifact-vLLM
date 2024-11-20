@@ -126,6 +126,7 @@ class CachedBlockAllocator(BlockAllocatorBase):
                 import time
                 import random
                 block.computed = False
+                block.total_count = 0
                 block.last_accessed = -1
                 # block.ref_seqs.clear()
                 
@@ -772,6 +773,7 @@ class BlockSpaceManagerV1(BlockSpaceManager):
             # in this step.
             block_table = self.block_tables[seq.seq_id]
             for block in block_table:
+                block.add_total_count(1, access_time)
                 block.last_accessed = access_time
                 # block.ref_seqs.add(seq)
 

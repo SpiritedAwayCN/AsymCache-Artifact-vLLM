@@ -26,7 +26,8 @@ class PhysicalTokenBlock:
 
         self.ref_count = 0
         self.last_accessed = DEFAULT_LAST_ACCESSED_TIME
-        self.ref_seqs: Set[Sequence] = set()
+        # self.ref_seqs: Set[Sequence] = set()
+        self.total_count = 0
 
         self.computed = False
 
@@ -37,6 +38,15 @@ class PhysicalTokenBlock:
                 f'ref_count={self.ref_count}, '
                 f'last_accessed={self.last_accessed}, '
                 f'computed={self.computed})')
+    
+    def add_total_count(self, count: int, now: float):
+        if self.last_accessed != DEFAULT_LAST_ACCESSED_TIME:
+            self.total_count *= 0.9 ** (now - self.last_accessed)
+        self.total_count += count
+    
+    def get_total_count(self, now: Optional[float] = None) -> float:
+        return self.total_count * \
+            (1 if now is None else 0.9 ** (now - self.last_accessed))
 
 
 class BlockTable:
