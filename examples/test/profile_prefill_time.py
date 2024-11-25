@@ -9,10 +9,12 @@ assert sys.argv[1] in ['1k', '5k', '10k', '20k', '40k', '80k'], f'Invalid argume
 START_TOKEN = int(sys.argv[2])
 assert START_TOKEN % 16 == 0, f'Invalid argument, got {START_TOKEN}'
 
-OUTPUT_DIR = './examples/test/output/'
+OUTPUT_DIR = './examples/test/output-llama/'
+model = "meta-llama/Meta-Llama-3.1-8B-Instruct"
+# model="LargeWorldModel/LWM-Text-1M"
 
 llm = LLM(
-    model="LargeWorldModel/LWM-Text-1M",
+    model=model,
     enable_prefix_caching=True,
     tensor_parallel_size=4,
     disable_log_stats=False,
