@@ -17,6 +17,7 @@ class EvictionPolicy(enum.Enum):
     LRU = enum.auto()
     LRU2 = enum.auto()
     LRU3 = enum.auto()
+    MWF = enum.auto() # Minimum Weight First，MWF
 
 
 class Evictor(ABC):
@@ -279,8 +280,49 @@ class LFUEvictor(Evictor):
     def num_blocks(self) -> int:
         return len(self.free_table)
 
+class WeightEvictor(Evictor):
 
-def make_evictor(eviction_policy: EvictionPolicy) -> Evictor:
+    def __init__(self, base, delta_func):
+        # self.delta(len) ---> delta_T
+        self.delta = delta_func
+        # block_hash ---> (block, weight)
+        self.free_table: Dict[int, PhysicalTokenBlock] = dict()
+
+        import sys
+        module_directory = '/home/infer/chenyilei/c_set/'
+        sys.path.append(module_directory)
+        from c_set import c_set
+        self.heap = c_set(base)
+
+    def __contains__(self, block_hash: int) -> bool:
+        return block_hash in self.free_table
+
+    def evict(self) -> PhysicalTokenBlock:
+        if len(self.free_table) == 0:
+            raise ValueError("No usable cache memory left")
+
+        evicted_hash = self.heap.pop_first()
+        evicted_block = self.free_table.pop(evicted_hash)
+        evicted_block.computed = False
+        return evicted_block
+
+    def add(self, block: PhysicalTokenBlock):
+        self.free_table[block.block_hash] = block
+        self.heap.insert(block.total_count * self.delta(block.num_hashed_tokens), block.last_accessed, block.block_hash)
+
+    def remove(self, block_hash: int) -> PhysicalTokenBlock:
+        if block_hash not in self.free_table:
+            raise ValueError(
+                "Attempting to remove block that's not in the evictor")
+        block = self.free_table.pop(block_hash)
+        self.heap.erase(block.total_count * self.delta(block.num_hashed_tokens), block.last_accessed, block_hash)
+        return block
+
+    @property
+    def num_blocks(self) -> int:
+        return len(self.free_table)
+
+def make_evictor(eviction_policy: EvictionPolicy, delta_fun = lambda x: x) -> Evictor:
     if eviction_policy == EvictionPolicy.LRU:
         return LRUEvictor()
     elif eviction_policy == EvictionPolicy.LRU2:
@@ -288,4 +330,4 @@ def make_evictor(eviction_policy: EvictionPolicy) -> Evictor:
     elif eviction_policy == EvictionPolicy.LRU3:
         return LRU3Evictor()
     else:
-        raise ValueError(f"Unknown cache eviction policy: {eviction_policy}")
+        return WeightEvictor(0.9, delta_fun)

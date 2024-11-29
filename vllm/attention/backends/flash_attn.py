@@ -830,8 +830,7 @@ def unified_flash_attention(
             else:
                 # two segment cache
                 max_seq_len = max(prefill_meta.seq_lens)
-                force_kBlockM = min(map(lambda x: 16 if (x & 63)==48 else (x & 63), prefill_meta.seq_lens_firstseg))
-                force_kBlockM = 64 if force_kBlockM == 0 else force_kBlockM
+                force_kBlockM = 64
                 # print("two-segment", f"force_kBlockM: {force_kBlockM}", f"prefill_meta: {prefill_meta}", flush=True)
                 # max_seq_len = max(map(lambda x, y: x + y, 
                 #                       prefill_meta.seq_lens, 

@@ -66,13 +66,15 @@ llm = LLM(
     disable_log_stats=False,
     enforce_eager=False,
     enable_chunked_prefill=False,
+    max_model_len=10000,
+    block_size=64,
 )
 block_manager = llm.llm_engine.scheduler[0].block_manager
 print(block_manager.__class__.__name__)
 # exit(0)
 
 block_manager.test_ignore_cache_block_start = 4
-block_manager.test_ignore_cache_block_num = 4
+block_manager.test_ignore_cache_block_num = 8
 
 sampling_params = SamplingParams(temperature=0, max_tokens=10)
 

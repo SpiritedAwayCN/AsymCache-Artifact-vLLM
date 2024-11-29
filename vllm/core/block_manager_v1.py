@@ -81,7 +81,7 @@ class CachedBlockAllocator(BlockAllocatorBase):
                  device: Device,
                  block_size: int,
                  num_blocks: int,
-                 eviction_policy: EvictionPolicy = EvictionPolicy.LRU2) -> None:
+                 eviction_policy: EvictionPolicy = EvictionPolicy.MWF) -> None:
         self.device = device
         self.block_size = block_size
         self.num_blocks = num_blocks
@@ -257,7 +257,7 @@ class BlockSpaceManagerV1(BlockSpaceManager):
         watermark: float = 0.01,
         sliding_window: Optional[int] = None,
         enable_caching: bool = False,
-        evictor_policy: EvictionPolicy = EvictionPolicy.LRU2,
+        evictor_policy: EvictionPolicy = EvictionPolicy.MWF,
         # enable_seq_refactor: bool = False,
     ) -> None:
         self.block_size = block_size
@@ -378,12 +378,9 @@ class BlockSpaceManagerV1(BlockSpaceManager):
             
             if block.computed:
                 if segment_status == 1:
-                    if (logical_idx - fitst_compute_start & 3) == 0:
-                        # multiple of 64
-                        segment_status += 1
-                        seq.suffix_computed_block_locs[0] = logical_idx * self.block_size
-                    else:
-                        block.computed = False # ignore cache
+                    # multiple of 64
+                    segment_status += 1
+                    seq.suffix_computed_block_locs[0] = logical_idx * self.block_size
             elif segment_status == 2:
                 segment_status = 3
                 seq.suffix_computed_block_locs[1] = logical_idx * self.block_size
