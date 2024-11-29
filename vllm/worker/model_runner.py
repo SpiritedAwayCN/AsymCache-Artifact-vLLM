@@ -555,10 +555,13 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
         computed_block_nums = inter_data.computed_block_nums
 
         # Note that prefix caching does not support sliding window.
+        has_2_segments = (inter_data.suffix_computed_block_locs is not None and
+                          inter_data.suffix_computed_block_locs[0] > 0)
         prefix_cache_hit = (computed_block_nums is not None
-                            and len(computed_block_nums) > 0
+                            and (len(computed_block_nums) > 0 or has_2_segments)
                             and self.sliding_window is None
                             and inter_data.is_prompt)
+        # has_2_segments = has_2_segments and len(computed_block_nums) == 0
         inter_data.prefix_cache_hit = prefix_cache_hit
 
         if not prefix_cache_hit:
@@ -575,11 +578,11 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
         # When chunked prefill is enabled, this is the token number of
         # computed chunks + current chunk.
         seq_len = inter_data.seq_lens[seq_idx]
-        if prefix_cache_len <= context_len:
+        if prefix_cache_len <= context_len and not has_2_segments:
             # We already passed the cache hit region,
             # so do normal computation.
             pass
-        elif context_len < prefix_cache_len < seq_len:
+        elif has_2_segments or context_len < prefix_cache_len < seq_len:
             # Partial hit. Compute the missing part.
             
             uncomputed_start = prefix_cache_len - context_len
