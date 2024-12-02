@@ -394,7 +394,7 @@ class BlockSpaceManagerV1(BlockSpaceManager):
             seq.suffix_computed_block_locs[1] = logical_idx * self.block_size
         logger.info(f"seq: {seq}, "
                     f"suffix_computed_block_locs: {seq.suffix_computed_block_locs}, "
-                    f"first_compute_start: {fitst_compute_start}")
+                    f"first_compute_start: {fitst_compute_start * self.block_size}")
 
         return block_table
 

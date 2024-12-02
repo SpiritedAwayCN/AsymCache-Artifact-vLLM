@@ -20,8 +20,8 @@ from vllm.inputs import TextPrompt, TokensPrompt
 from vllm.transformers_utils.tokenizer_group import (
     BaseTokenizerGroup, init_tokenizer_from_configs)
 
-TP = 1
-block_size = 16
+TP = 4
+block_size = 64
 
 model = "meta-llama/Meta-Llama-3.1-8B-Instruct"
 params_dict = { # TP -> num_blocks (with block_size=16), A800 80GB

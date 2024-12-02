@@ -1,6 +1,6 @@
 import enum
 from abc import ABC, abstractmethod
-from typing import OrderedDict
+from typing import OrderedDict, Dict
 
 from vllm.block import PhysicalTokenBlock
 from vllm.logger import init_logger
@@ -18,6 +18,7 @@ class EvictionPolicy(enum.Enum):
     LRU2 = enum.auto()
     LRU3 = enum.auto()
     MWF = enum.auto() # Minimum Weight First，MWF
+    LFU = enum.auto()
 
 
 class Evictor(ABC):
@@ -289,7 +290,10 @@ class WeightEvictor(Evictor):
         self.free_table: Dict[int, PhysicalTokenBlock] = dict()
 
         import sys
-        module_directory = '/home/infer/chenyilei/c_set/'
+        import os
+        module_directory = os.environ.get("CSET_DIR", None)
+        if module_directory is None:
+            logger.error("CSET_DIR environment variable not set")
         sys.path.append(module_directory)
         from c_set import c_set
         self.heap = c_set(base)
@@ -304,6 +308,7 @@ class WeightEvictor(Evictor):
         evicted_hash = self.heap.pop_first()
         evicted_block = self.free_table.pop(evicted_hash)
         evicted_block.computed = False
+        evicted_block.total_count = 0
         return evicted_block
 
     def add(self, block: PhysicalTokenBlock):
@@ -329,5 +334,9 @@ def make_evictor(eviction_policy: EvictionPolicy, delta_fun = lambda x: x) -> Ev
         return LRU2Evictor()
     elif eviction_policy == EvictionPolicy.LRU3:
         return LRU3Evictor()
+    elif eviction_policy == EvictionPolicy.LFU:
+        return WeightEvictor(0.5**(1/60), lambda x: 1)
     else:
-        return WeightEvictor(0.9, delta_fun)
+        c = 2.91200787e-01 + 1.04221165e-04
+        k = 2 * 1.04221165e-04
+        return WeightEvictor(0.5**(1/60), lambda x: k * x + c)

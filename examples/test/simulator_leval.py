@@ -3,6 +3,7 @@ import json
 import random
 import os
 import glob
+import sys
 
 from vllm.sequence import Sequence, SequenceGroup, SequenceStatus
 from vllm.transformers_utils.tokenizer_group import TokenizerGroup
@@ -17,8 +18,19 @@ from vllm.inputs import TextPrompt, TokensPrompt
 from vllm.transformers_utils.tokenizer_group import (
     BaseTokenizerGroup, init_tokenizer_from_configs)
 
-TP = 2
-block_size = 16
+
+policy = 'mwf' if len(sys.argv) < 2 else sys.argv[1]
+if policy == 'mwf':
+    policy = EvictionPolicy.MWF
+elif policy == 'lru':
+    policy = EvictionPolicy.LRU2
+elif policy == 'lfu':
+    policy = EvictionPolicy.LFU
+else:
+    raise ValueError(f"Invalid policy {policy}")
+
+TP = 4
+block_size = 64
 
 # model = "meta-llama/Meta-Llama-3.1-8B-Instruct"
 model = "LargeWorldModel/LWM-Text-1M"
@@ -30,11 +42,11 @@ params_dict = { # TP -> num_blocks (with block_size=16), A800 80GB
 
 block_manager = BlockSpaceManagerV1(
     block_size=block_size,
-    num_gpu_blocks=params_dict[TP]['num_gpu_blocks'] * 16 // block_size,
-    num_cpu_blocks=params_dict[TP]['num_cpu_blocks'] * 16 // block_size,
+    num_gpu_blocks=7204,# params_dict[TP]['num_gpu_blocks'] * 16 // block_size,
+    num_cpu_blocks=512, # params_dict[TP]['num_cpu_blocks'] * 16 // block_size,
     sliding_window=None,
     enable_caching=True,
-    evictor_policy=EvictionPolicy.LRU3,
+    evictor_policy=policy,
 )
 
 seq_counter = Counter()
@@ -116,6 +128,23 @@ def simulate_allocate_block(msgs, chat_template=None):
     for seq in seq_group.get_seqs(status=SequenceStatus.WAITING):
         seq.status = SequenceStatus.FINISHED_LENGTH_CAPPED
     block_manager.free(seq)
+
+def shuffle_array_within_k(array, K, seed=None):
+    if seed is not None:
+        random.seed(seed)
+    
+    n = len(array)
+    indexed_arr = []
+    
+    for i in range(n):
+        new_index = i + random.randint(-K, K)
+        indexed_arr.append((new_index, array[i]))
+    
+    indexed_arr.sort()
+    
+    shuffled_arr = [elem for index, elem in indexed_arr]
+    
+    return shuffled_arr
     
 if __name__ == '__main__':
     import pandas as pd
@@ -126,8 +155,9 @@ if __name__ == '__main__':
     df = pd.read_csv(f'{BASE_DIR}/seqlen_stat_LEval.csv')
     
     index_list = list(range(len(df)))
-    random.seed(0)
-    random.shuffle(index_list)
+    index_list = shuffle_array_within_k(index_list, 20, seed=0)
+    # random.seed(0)
+    # random.shuffle(index_list)
     
     datasets = {}
     
@@ -145,16 +175,25 @@ if __name__ == '__main__':
         print(file_name, len(datasets[file_name]))
     
     total_session = sum(len(datasets[file_name]) for file_name in datasets)
+    
+    current_turn_map = {}
                 
     print(index_list, total_session)
     for idx in index_list:
         row = df.iloc[idx]
         file_name, line_number, turn_id = row['file'], row['line'], row['turn']
         
-        data = datasets[file_name][line_number]
+        current_turn_map_key = f'{file_name}:{line_number}'
+        if current_turn_map_key in current_turn_map:
+            current_turn_map[current_turn_map_key] += 1
+        else:
+            current_turn_map[current_turn_map_key] = 0
         
+        data = datasets[file_name][line_number]
         msgs2 = [{'role': 'user', 'content': data['input'] + '\n\n'}]
         for idx, question in enumerate(data['instructions']):
+            if idx > current_turn_map[current_turn_map_key]:
+                break
             if idx == 0:
                 msgs2[0]['content'] += question
             else:
@@ -162,3 +201,6 @@ if __name__ == '__main__':
                 msgs2.append({'role': 'user', 'content': question})
         
         simulate_allocate_block(msgs2, chat_template=chat_template)
+        
+        if policy != EvictionPolicy.LRU2:
+            time.sleep(1 + random.random() * 2)
