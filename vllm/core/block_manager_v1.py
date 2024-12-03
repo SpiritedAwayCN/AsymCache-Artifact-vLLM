@@ -380,10 +380,10 @@ class BlockSpaceManagerV1(BlockSpaceManager):
                 if segment_status == 1:
                     # multiple of 64
                     segment_status += 1
-                    seq.suffix_computed_block_locs[0] = logical_idx * self.block_size
+                    seq.suffix_computed_block_locs[0] = logical_idx
             elif segment_status == 2:
                 segment_status = 3
-                seq.suffix_computed_block_locs[1] = logical_idx * self.block_size
+                seq.suffix_computed_block_locs[1] = logical_idx
             elif segment_status == 0:
                 segment_status = 1
                 fitst_compute_start = logical_idx
@@ -391,7 +391,15 @@ class BlockSpaceManagerV1(BlockSpaceManager):
             block_table.append(block)
 
         if segment_status == 2:
-            seq.suffix_computed_block_locs[1] = logical_idx * self.block_size
+            seq.suffix_computed_block_locs[1] = logical_idx
+        elif seq.suffix_computed_block_locs[0] > 0:
+            real_total_count = block_table[seq.suffix_computed_block_locs[1]].total_count
+            for block in block_table._blocks[seq.suffix_computed_block_locs[0]:seq.suffix_computed_block_locs[1]]:
+                block.total_count = real_total_count
+            
+        seq.suffix_computed_block_locs[0] *= self.block_size
+        seq.suffix_computed_block_locs[1] *= self.block_size
+        
         logger.info(f"seq: {seq}, "
                     f"suffix_computed_block_locs: {seq.suffix_computed_block_locs}, "
                     f"first_compute_start: {fitst_compute_start * self.block_size}")

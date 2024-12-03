@@ -202,5 +202,12 @@ if __name__ == '__main__':
         
         simulate_allocate_block(msgs2, chat_template=chat_template)
         
-        if policy != EvictionPolicy.LRU2:
-            time.sleep(1 + random.random() * 2)
+        # if policy != EvictionPolicy.LRU2:
+        #     time.sleep(1 + random.random() * 2)
+    
+    
+    print('=' * 80)
+    print(f'free table blocks at the end (len={len(block_manager.gpu_allocator.evictor.free_table)})')
+    
+    for block in block_manager.gpu_allocator.evictor.free_table.values():
+        print(block)

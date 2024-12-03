@@ -37,7 +37,8 @@ class PhysicalTokenBlock:
                 f'num_hashed_tokens={self.num_hashed_tokens}, '
                 f'ref_count={self.ref_count}, '
                 f'last_accessed={self.last_accessed}, '
-                f'computed={self.computed})')
+                f'computed={self.computed}), '
+                f'total_count={self.total_count}')
     
     def add_total_count(self, count: int, now: float):
         if self.last_accessed != DEFAULT_LAST_ACCESSED_TIME:

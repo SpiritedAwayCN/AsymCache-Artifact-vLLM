@@ -239,15 +239,19 @@ class LRU2Evictor(Evictor):
         return len(self.free_table)
 
 class LFUEvictor(Evictor):
-    """Evicts in a least-frequently-used order using the total_count that's
-    recorded in the PhysicalTokenBlock. If there are multiple blocks with the
-    same total_count, then the one with the largest num_hashed_tokens will be
-    evicted. If two blocks each have the lowest total_count and highest
-    num_hashed_tokens value, then one will be chose arbitrarily
-    """
+    
+    def __init__(self, base):
+        # block_hash ---> (block, weight)
+        self.free_table: Dict[int, PhysicalTokenBlock] = dict()
 
-    def __init__(self):
-        self.free_table: OrderedDict[int, PhysicalTokenBlock] = OrderedDict()
+        import sys
+        import os
+        module_directory = os.environ.get("CSET_DIR", None)
+        if module_directory is None:
+            logger.error("CSET_DIR environment variable not set")
+        sys.path.append(module_directory)
+        from c_set import c_set_lfu
+        self.heap = c_set_lfu(base)
 
     def __contains__(self, block_hash: int) -> bool:
         return block_hash in self.free_table
@@ -256,25 +260,22 @@ class LFUEvictor(Evictor):
         if len(self.free_table) == 0:
             raise ValueError("No usable cache memory left")
 
-        evicted_block = next(iter(self.free_table.values()))
-        for _, block in self.free_table.items():
-            if evicted_block.get_total_count() < block.get_total_count():
-                break
-            if evicted_block.num_hashed_tokens < block.num_hashed_tokens:
-                evicted_block = block
-
-        self.free_table.pop(evicted_block.block_hash)
+        evicted_hash = self.heap.pop_first()
+        evicted_block = self.free_table.pop(evicted_hash)
+        evicted_block.computed = False
+        evicted_block.total_count = 0
         return evicted_block
 
     def add(self, block: PhysicalTokenBlock):
         self.free_table[block.block_hash] = block
+        self.heap.insert(block.total_count, block.last_accessed, block.block_hash, block.num_hashed_tokens)
 
     def remove(self, block_hash: int) -> PhysicalTokenBlock:
         if block_hash not in self.free_table:
             raise ValueError(
                 "Attempting to remove block that's not in the evictor")
-        block: PhysicalTokenBlock = self.free_table[block_hash]
-        self.free_table.pop(block_hash)
+        block = self.free_table.pop(block_hash)
+        self.heap.erase(block.total_count, block.last_accessed, block_hash, block.num_hashed_tokens)
         return block
 
     @property
@@ -335,8 +336,8 @@ def make_evictor(eviction_policy: EvictionPolicy, delta_fun = lambda x: x) -> Ev
     elif eviction_policy == EvictionPolicy.LRU3:
         return LRU3Evictor()
     elif eviction_policy == EvictionPolicy.LFU:
-        return WeightEvictor(0.5**(1/60), lambda x: 1)
+        return LFUEvictor(0.5**(1/20))
     else:
-        c = 2.91200787e-01 + 1.04221165e-04
+        c = (2.91200787e-01 + 1.04221165e-04) // 16
         k = 2 * 1.04221165e-04
-        return WeightEvictor(0.5**(1/60), lambda x: k * x + c)
+        return WeightEvictor(0.5**(1/20), lambda x: k * x + c)
