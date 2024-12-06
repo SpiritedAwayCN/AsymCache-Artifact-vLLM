@@ -38,13 +38,13 @@ async def handle_request():
         # finish prefill
         # Get environment variable VLLM_PORT
         vllm_port = os.environ.get('VLLM_PORT')
-        print("forwarding prefill")
+        # print("forwarding prefill")
         async for _ in forward_request(f'http://localhost:8100/v1/completions',
                                        prefill_request):
             continue
 
         # return decode
-        print("forwarding decode")
+        # print("forwarding decode")
         generator = forward_request(f'http://localhost:8200/v1/completions',
                                     original_request_data)
         response = await make_response(generator)

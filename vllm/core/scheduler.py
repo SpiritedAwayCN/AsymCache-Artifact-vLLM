@@ -1362,6 +1362,7 @@ class Scheduler:
         self.cache_id = self.next_cache_id
 
         # Return results
+        # print(f"IN scheduler len(seq_group_metadata_list)={len(seq_group_metadata_list)} != In Scheduler len(scheduler_outputs.scheduled_seq_groups)={len(scheduler_outputs.scheduled_seq_groups)}")
         return (seq_group_metadata_list, scheduler_outputs,
                 allow_async_output_proc)
 

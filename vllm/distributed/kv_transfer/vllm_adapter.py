@@ -396,7 +396,13 @@ def build_partial_prefill_input(
     rebuilt_attn_metadata.slot_mapping = torch.cat(rebuilt_slot_mapping).to(
         device)
     rebuilt_attn_metadata.max_query_len = rebuilt_max_query_len
-
+    max_length = max(len(sublist) for sublist in rebuilt_block_tables)
+    # padding the lists,sublist is the list of torch.tensor
+    # print("calling rebuild outside!!!!!!!!!!!!!!!!!!!!")
+    for sublist in rebuilt_block_tables:
+        while len(sublist) < max_length:
+            # print("calling rebuild")
+            sublist.append(torch.full_like(sublist[0], 0)) 
     rebuilt_attn_metadata.block_tables = torch.tensor(
         rebuilt_block_tables,
         dtype=model_input.attn_metadata.block_tables.dtype).to(device)
