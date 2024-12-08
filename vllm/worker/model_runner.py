@@ -1718,7 +1718,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         bypass_model_exec = False
         if self.need_recv_kv(model_input, kv_caches):
             hidden_or_intermediate_states, bypass_model_exec, model_input = \
-                get_disagg_group().recv_kv_caches_and_hidden_states(
+                get_disagg_group().direct_recv_kv_caches_and_hidden_states(
                     # model is used to know which layer the current worker
                     # is working on, so that we can receive KV for only those
                     # layers.
@@ -1757,7 +1757,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         # Sending KV cache in distributed KV cache transfer setting
         # NOTE: the send operation is non-blocking
         if self.need_send_kv(model_input, kv_caches):
-            get_disagg_group().send_kv_caches_and_hidden_states(
+            get_disagg_group().direct_send_kv_caches_and_hidden_states(
                 # model_executable is used to know which layer the current
                 # worker is working on, so that we can send KV for only those
                 # layers.

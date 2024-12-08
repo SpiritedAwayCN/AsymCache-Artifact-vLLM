@@ -287,3 +287,65 @@ class TorchDistributedPipe(KVPipeBase):
         if (hasattr(self, "transport_thread")
                 and self.transport_thread is not None):
             self.transport_thread.shutdown()
+            
+    def send_tensor_list(self, tensors: List[torch.Tensor]) -> None:
+        """
+        Send a list of tensors to the destination rank, preserving the order.
+
+        Parameters:
+            - tensors: List of torch.Tensor objects to send
+        """
+        if not tensors:
+            return
+
+        try:
+            # Send tensors one by one
+            logger.debug(f"RANK:{torch.distributed.get_rank()}  Sending tensor list")
+            for tensor in tensors:
+                if tensor is None:
+                    tensor = self.none_tensor
+                self._send_impl(tensor)  # Send each tensor using the _send_impl method
+            
+            # torch.distributed.barrier()
+            logger.debug(f"RANK:{torch.distributed.get_rank()}All tensors sent")
+
+        except Exception as e:
+            logger.error("Exception in send_tensor_list: %s", e)
+            import traceback
+            traceback.print_exc()
+
+
+    def receive_tensor_list(self, num_tensors: Optional[int] = 5) -> List[Optional[torch.Tensor]]:
+        """
+        Receive a list of tensors from the source rank, preserving the order.
+        This function will receive exactly `num_tensors` tensors.
+
+        Parameters:
+            - num_tensors: Number of tensors to receive.
+
+        Returns:
+            - List of torch.Tensor objects received, maintaining the order of transmission
+        """
+        received_tensors = []
+
+        try:
+            logger.debug(f"Receiving {num_tensors} tensors")
+            
+            for _ in range(num_tensors):
+                tensor = self._recv_impl()  # Receive one tensor at a time using recv_impl
+                if tensor.numel() == 1 and tensor.item() == NONE_INT:
+                    logger.debug("Received None tensor")
+                    received_tensors.append(None)
+                else:
+                    # logger.debug("Received tensor with shape %s", tensor.shape)
+                    received_tensors.append(tensor)
+
+            # torch.distributed.barrier()
+            logger.debug("All tensors received")
+            return received_tensors
+
+        except Exception as e:
+            logger.error("Exception in receive_tensor_list: %s", e)
+            import traceback
+            traceback.print_exc()
+            return []

@@ -9,8 +9,8 @@ benchmark() {
   model="/home/tzl/huggingface/modelzoo/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659"
   dataset_name="sonnet"
   dataset_path="../sonnet_4x.txt"
-  num_prompts=500
-  qps=8
+  num_prompts=100
+  qps=2
   prefix_len=50
   input_len=400
   output_len=100
