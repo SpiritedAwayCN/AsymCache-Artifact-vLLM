@@ -469,7 +469,56 @@ class KV_transfer_agent:
             hidden_or_intermediate_states = torch.cat(
                 hidden_or_intermediate_states_for_one_req, dim=0)
 
-        return hidden_or_intermediate_states, bypass_model_exec, model_input 
+        return hidden_or_intermediate_states, bypass_model_exec, model_input
+    
+    def send_hash(
+        self,
+        model_input: "ModelInputForGPUWithSamplingMetadata",
+        block_size: Optional[int] = 16,
+    ):
+        seq_lens = model_input.attn_metadata.seq_lens
+        if len(seq_lens) == 0:
+            hash_list = [None]
+        else:
+            hash_list = []
+        # sending signals to decode
+        hash_num = 0
+        for idx, slen in enumerate(seq_lens):
+            start_pos = sum(seq_lens[:idx])
+            end_pos = start_pos + slen
+            num_of_seqs = len(model_input.sampling_metadata.seq_groups[idx].seq_ids)
+            seq_id = model_input.sampling_metadata.seq_groups[idx].seq_ids[0]
+            token_ids = model_input.sampling_metadata.seq_groups[idx].seq_data[seq_id].get_token_ids()
+            block_num = len(token_ids) // block_size
+            hash_num += block_num
+            for i in range(block_num):
+                block_token_ids = token_ids[:(i+1) * block_size]
+                tupled_token_ids = tuple(block_token_ids)
+                # logger.debug(f"RANK:{torch.distributed.get_rank()}:{block_token_ids}")
+                hash_block_token_ids = hash((tupled_token_ids,0))
+                # make hash as an tensor
+                seq_id2hash = torch.tensor([seq_id,hash_block_token_ids], dtype=torch.int64)
+                hash_list.append(seq_id2hash)
+        logger.debug(f"Send total_hash_num:{hash_num}")
+        block_hash_num = torch.tensor([-1,hash_num], dtype=torch.int64)
+        self.send_pipe.send_tensor_list([block_hash_num])
+        logger.debug(f"RANK:{torch.distributed.get_rank()}  sending hash in adapter,hash list:{hash_list}")
+        self.send_pipe.send_tensor_list(hash_list)
+        logger.debug(f"RANK:{torch.distributed.get_rank()}  sending hash complete")
+    
+    def recv_hash(self):
+        # try executing receive hash in limited time
+        # receive num of hash
+        logger.debug(f"RANK:{torch.distributed.get_rank()}  receiving hash num in adapter")
+        block_hash_num_ts_list = self.recv_pipe.receive_tensor_list(1)
+        assert len(block_hash_num_ts_list) == 1
+        block_hash_num_ts = block_hash_num_ts_list[0]
+        block_hash_num = block_hash_num_ts[1]
+        logger.debug(f"RANK:{torch.distributed.get_rank()}  receiving {block_hash_num} hashes in adapter")
+        hash_block_token_ids = self.recv_pipe.receive_tensor_list(block_hash_num)
+        logger.debug(f"RANK:{torch.distributed.get_rank()}  receiving hash complete")
+        return hash_block_token_ids
+    
 def build_partial_prefill_input(
     model_input: "ModelInputForGPUWithSamplingMetadata",
     input_tokens_list: List[torch.Tensor],
