@@ -31,13 +31,13 @@ def stat_file(file):
                     triggered_2seg += 1
 
     print('Total blocks:', total_blocks)
-    print('Total cached blocks:', total_cached_blocks, 'rate=(', total_cached_blocks / total_blocks, ')')
+    print('Total cached blocks:', total_cached_blocks, '(rate=', total_cached_blocks / total_blocks, ')')
     print('Total seq:', total_seq)
-    print('Triggered 2seg:', triggered_2seg, 'rate=(', triggered_2seg / total_seq, ')')
+    print('Triggered 2seg:', triggered_2seg, '(rate=', triggered_2seg / total_seq, ')')
     
 
 if __name__ == '__main__':
-    FILES = ['LEval_simulator_lru.log', 'LEval_simulator_lfuv3.log', 'LEval_simulator_mwfv3.log']
+    FILES = ['LEval_simulator_lru.log', 'LEval_simulator_lfuv6.log', 'LEval_simulator_mwfv6.log']
     for file in FILES:
         stat_file(file)
         print()

@@ -2,7 +2,7 @@ import enum
 from abc import ABC, abstractmethod
 from typing import OrderedDict, Dict
 
-from vllm.block import PhysicalTokenBlock
+from vllm.block import PhysicalTokenBlock, BASE_FREQ
 from vllm.logger import init_logger
 
 logger = init_logger(__name__)
@@ -241,6 +241,7 @@ class LRU2Evictor(Evictor):
 class LFUEvictor(Evictor):
     
     def __init__(self, base):
+        logger.info(f"{self.__class__.__name__} is used, base is {base}.")
         # block_hash ---> (block, weight)
         self.free_table: Dict[int, PhysicalTokenBlock] = dict()
 
@@ -260,6 +261,7 @@ class LFUEvictor(Evictor):
         if len(self.free_table) == 0:
             raise ValueError("No usable cache memory left")
 
+        # logger.info(f"evicting, heap size = {self.heap.size()}")
         evicted_hash = self.heap.pop_first()
         evicted_block = self.free_table.pop(evicted_hash)
         evicted_block.computed = False
@@ -285,6 +287,7 @@ class LFUEvictor(Evictor):
 class WeightEvictor(Evictor):
 
     def __init__(self, base, delta_func):
+        logger.info(f"{self.__class__.__name__} is used, base is {base}.")
         # self.delta(len) ---> delta_T
         self.delta = delta_func
         # block_hash ---> (block, weight)
@@ -336,8 +339,8 @@ def make_evictor(eviction_policy: EvictionPolicy, delta_fun = lambda x: x) -> Ev
     elif eviction_policy == EvictionPolicy.LRU3:
         return LRU3Evictor()
     elif eviction_policy == EvictionPolicy.LFU:
-        return LFUEvictor(0.5**(1/20))
+        return LFUEvictor(BASE_FREQ)
     else:
         c = (2.91200787e-01 + 1.04221165e-04) // 16
         k = 2 * 1.04221165e-04
-        return WeightEvictor(0.5**(1/20), lambda x: k * x + c)
+        return WeightEvictor(BASE_FREQ, lambda x: k * x + c)

@@ -4,7 +4,16 @@ from typing import TYPE_CHECKING, Iterator, List, Optional, Set
 from vllm.utils import Device
 from vllm.sequence import Sequence, SequenceGroup
 
+import os
+
+_half_life = os.environ.get('HALF_LIFE', 10)
+try:
+    HALF_LIFE = float(_half_life)
+except ValueError:
+    HALF_LIFE = 10
+
 DEFAULT_LAST_ACCESSED_TIME: float = -1
+BASE_FREQ: float = 0.5**(1/10)
 
 
 class PhysicalTokenBlock:
@@ -42,12 +51,12 @@ class PhysicalTokenBlock:
     
     def add_total_count(self, count: int, now: float):
         if self.last_accessed != DEFAULT_LAST_ACCESSED_TIME:
-            self.total_count *= 0.9 ** (now - self.last_accessed)
+            self.total_count *= BASE_FREQ ** (now - self.last_accessed)
         self.total_count += count
     
     def get_total_count(self, now: Optional[float] = None) -> float:
         return self.total_count * \
-            (1 if now is None else 0.9 ** (now - self.last_accessed))
+            (1 if now is None else BASE_FREQ ** (now - self.last_accessed))
 
 
 class BlockTable:
