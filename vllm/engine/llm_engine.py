@@ -1340,7 +1340,8 @@ class LLMEngine:
         allow_async_output_proc = cached_outputs.allow_async_output_proc
 
         ctx = self.scheduler_contexts[virtual_engine]
-
+        # TODO: add support for PP in the future
+        block_manager = self.scheduler[virtual_engine].block_manager
         # Clear outputs for each new scheduler iteration
         ctx.request_outputs.clear()
         # Skip the scheduler if there are any remaining steps in the seq groups.
@@ -1404,7 +1405,7 @@ class LLMEngine:
                     virtual_engine]
 
             outputs = self.model_executor.execute_model(
-                execute_model_req=execute_model_req)
+                execute_model_req=execute_model_req,block_manager=block_manager)
 
             # We need to do this here so that last step's sampled_token_ids can
             # be passed to the next iteration for PP.

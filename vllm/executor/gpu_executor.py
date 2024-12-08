@@ -10,7 +10,8 @@ from vllm.sequence import ExecuteModelRequest, PoolerOutput
 from vllm.utils import (get_distributed_init_method, get_ip, get_open_port,
                         make_async)
 from vllm.worker.worker_base import WorkerBase, WorkerWrapperBase
-
+from vllm.core.block_manager_v1 import BlockSpaceManagerV1
+from vllm.core.block_manager_v2 import BlockSpaceManagerV2
 logger = init_logger(__name__)
 
 
@@ -131,9 +132,9 @@ class GPUExecutor(ExecutorBase):
         self.driver_worker.initialize_cache(num_gpu_blocks, num_cpu_blocks)
 
     def execute_model(
-        self, execute_model_req: ExecuteModelRequest
+        self, execute_model_req: ExecuteModelRequest, block_manager: Optional[Union[BlockSpaceManagerV1, BlockSpaceManagerV2]] = None
     ) -> Optional[List[Union[SamplerOutput, PoolerOutput]]]:
-        output = self.driver_worker.execute_model(execute_model_req)
+        output = self.driver_worker.execute_model(execute_model_req,block_manager)
         return output
 
     def add_lora(self, lora_request: LoRARequest) -> bool:
