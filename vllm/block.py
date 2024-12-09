@@ -13,7 +13,7 @@ except ValueError:
     HALF_LIFE = 10
 
 DEFAULT_LAST_ACCESSED_TIME: float = -1
-BASE_FREQ: float = 0.5**(1/10)
+BASE_FREQ: float = 0.5**(1/HALF_LIFE)
 
 
 class PhysicalTokenBlock:

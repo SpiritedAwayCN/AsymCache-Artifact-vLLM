@@ -18,6 +18,7 @@ do
             for policy in mwf lfu
             do
                 echo "Simulating $policy with qps=$qps, div=$div, half_life=$half_life..."
+                # HALF_LIFE=$half_life python -c "import os; print(os.environ['HALF_LIFE'])"
                 HALF_LIFE=$half_life python examples/test/simulator_leval.py \
                     --policy $policy \
                     --qps $qps \
