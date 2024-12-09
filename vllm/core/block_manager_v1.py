@@ -307,6 +307,10 @@ class BlockSpaceManagerV1(BlockSpaceManager):
         #     self.seq_refactor = True
         #     self.refseq_tracker = RefSeqTracker()
 
+    def get_hash_block_ids(self, block_hash: int, seq_id: int)-> List[int]:
+        block_table: BlockTable = self.block_tables[seq_id]
+        return block_table.get_blockids_from_hash(block_hash)
+    
     def _get_seq_num_required_blocks(self, seq: Optional[Sequence]) -> int:
         return 0 if seq is None else seq.n_blocks
 

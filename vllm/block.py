@@ -51,6 +51,21 @@ class BlockTable:
             for block in blocks:
                 self.append(block)
 
+    def get_blockids_from_hash(self, block_hash: int) -> List[int]:
+        # find block
+        block_ids = None
+        for block in self._blocks:
+            print(f"block.block_hash: {block.block_hash}, block_hash: {block_hash}")
+            if block.block_hash == block_hash:
+                block_ids = block.block_number
+                break
+        # find pos in self._block_ids
+        if block_ids is None:
+            return []
+        pos = self._block_ids.index(block_ids)
+        # return the block ids as a list
+        return self._block_ids[0:pos+1]
+    
     def append(self, block: PhysicalTokenBlock):
         self._blocks.append(block)
         self._block_ids.append(block.block_number)
