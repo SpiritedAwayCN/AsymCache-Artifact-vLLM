@@ -37,7 +37,7 @@ from vllm.distributed.kv_transfer.kv_pipe.torch_distributed_pipe import (
     TorchDistributedPipe)
 from vllm.logger import init_logger
 from vllm.sequence import IntermediateTensors
-
+import threading
 logger = init_logger(__name__)
 
 # check VLLM_DISTRIBUTERD_KV_ROLE and set corresponding flags
@@ -81,7 +81,7 @@ class KV_transfer_agent:
         self.recv_buffer: Optional[KVLookupBufferBase] = None
 
         SimpleKVLookupBuffer = sklb.SimpleKVLookupBuffer
-
+        self.transport_thread: Optional[threading.Thread] = None
         # In disaggregated prefill, the prefill vLLM only uses send pipe
         # and the decode vLLM only uses recv pipe
         # In remote KV cache store, vLLM will use both send pipe and recv pipe
@@ -237,10 +237,15 @@ class KV_transfer_agent:
 
             keys = torch.cat(keys, dim=0)
             values = torch.cat(values, dim=0)
+            
             if self.send_pipe is not None:
                 logger.debug("[rank%d]: KV DIRECT send.", torch.distributed.get_rank())
                 self.send_pipe.send_tensor_list([current_tokens, torch.ones_like(current_tokens, dtype=bool), keys, values, hidden_or_intermediate_states[start_pos:end_pos]])
-
+                # tensor_list = [current_tokens, torch.ones_like(current_tokens, dtype=bool), keys, values, hidden_or_intermediate_states[start_pos:end_pos]]
+                # if self.transport_thread is None:
+                #     self.transport_thread = threading.Thread(target=self.send_pipe.send_tensor_list, args=(tensor_list,))
+                #     self.transport_thread.start()
+    
     def destroy(self) -> None:
         if self.send_buffer is not None:
             self.send_buffer.close()
