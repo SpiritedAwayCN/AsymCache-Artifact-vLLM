@@ -4,6 +4,7 @@ import random
 import os
 import glob
 import sys
+import argparse
 
 from vllm.sequence import Sequence, SequenceGroup, SequenceStatus
 from vllm.transformers_utils.tokenizer_group import TokenizerGroup
@@ -19,15 +20,21 @@ from vllm.transformers_utils.tokenizer_group import (
     BaseTokenizerGroup, init_tokenizer_from_configs)
 
 
-policy = 'mwf' if len(sys.argv) < 2 else sys.argv[1]
-if policy == 'mwf':
+parser = argparse.ArgumentParser()
+parser.add_argument('--policy', '-p', type=str, choices=['mwf', 'lru', 'lfu'], default='mwf')
+parser.add_argument('--div', '-d', type=int, default=20)
+parser.add_argument('--seed', '-s', type=int, default=0)
+parser.add_argument('--qps', '-q', type=float, default=1)
+arg = parser.parse_args()
+
+if arg.policy == 'mwf':
     policy = EvictionPolicy.MWF
-elif policy == 'lru':
+elif arg.policy == 'lru':
     policy = EvictionPolicy.LRU2
-elif policy == 'lfu':
+elif arg.policy == 'lfu':
     policy = EvictionPolicy.LFU
 else:
-    raise ValueError(f"Invalid policy {policy}")
+    raise ValueError(f"Invalid policy {arg.policy}")
 
 TP = 4
 block_size = 64
@@ -94,7 +101,7 @@ def simulate_allocate_block(msgs, chat_template=None):
         prompt = prompt_data
     
     seq_id = next(seq_counter)
-    arrival_time = time.time() + seq_id * 100
+    arrival_time = 0.5 + seq_id * arg.qps
     prompt_token_ids = tokenizer.encode(prompt)
     # output_token_ids = tokenizer.encode(outputs)
     
@@ -119,7 +126,7 @@ def simulate_allocate_block(msgs, chat_template=None):
     block_manager.allocate(seq_group)
     for seq in seq_group.get_seqs(status=SequenceStatus.WAITING):
         seq.status = SequenceStatus.RUNNING
-    block_manager.access_all_blocks_in_seq(seq, arrival_time + 10)
+    block_manager.access_all_blocks_in_seq(seq, arrival_time + 0.1)
     
     # Compute
     block_manager.mark_blocks_as_computed(seq_group, len(prompt_token_ids))
@@ -155,9 +162,11 @@ if __name__ == '__main__':
     df = pd.read_csv(f'{BASE_DIR}/seqlen_stat_LEval.csv')
     
     index_list = list(range(len(df)))
-    index_list = shuffle_array_within_k(index_list, 20, seed=0)
-    # random.seed(0)
-    # random.shuffle(index_list)
+    if arg.div >= 0:
+        index_list = shuffle_array_within_k(index_list, arg.div, seed=arg.seed)
+    else:
+        random.seed(arg.seed)
+        random.shuffle(index_list)
     
     datasets = {}
     
@@ -202,5 +211,12 @@ if __name__ == '__main__':
         
         simulate_allocate_block(msgs2, chat_template=chat_template)
         
-        if policy != EvictionPolicy.LRU2:
-            time.sleep(1 + random.random() * 2)
+        # if policy != EvictionPolicy.LRU2:
+        #     time.sleep(1 + random.random() * 2)
+    
+    
+    print('=' * 80)
+    print(f'free table blocks at the end (len={len(block_manager.gpu_allocator.evictor.free_table)})')
+    
+    for block in block_manager.gpu_allocator.evictor.free_table.values():
+        print(block)
