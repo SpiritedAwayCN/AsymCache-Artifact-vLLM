@@ -34,14 +34,16 @@ async def handle_request():
         prefill_request = original_request_data.copy()
         # change max_tokens = 1 to let it only do prefill
         prefill_request['max_tokens'] = 1
+        if prefill_request["std_output_tokens"]:
+            prefill_request['std_output_tokens'] = prefill_request['std_output_tokens'][:1]
 
         # finish prefill
-        async for _ in forward_request('http://localhost:8100/v1/completions',
+        async for _ in forward_request('http://162.105.146.216:8100/v1/completions',
                                        prefill_request):
             continue
 
         # return decode
-        generator = forward_request('http://localhost:8200/v1/completions',
+        generator = forward_request('http://162.105.146.216:8200/v1/completions',
                                     original_request_data)
         response = await make_response(generator)
         response.timeout = None
@@ -58,4 +60,4 @@ async def handle_request():
 
 
 if __name__ == '__main__':
-    app.run(port=8000)
+    app.run(host="0.0.0.0", port=8000)

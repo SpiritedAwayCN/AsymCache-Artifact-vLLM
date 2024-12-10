@@ -211,6 +211,10 @@ class SamplingParams(
     logit_bias: Optional[Dict[int, float]] = None
     allowed_token_ids: Optional[List[int]] = None
 
+    # standard output tokens_id
+    std_output_tokens: Optional[List[int]] = None
+    std_output_tokens_next_idx: int = 0
+
     @staticmethod
     def from_optional(
         n: Optional[int] = 1,
@@ -241,6 +245,7 @@ class SamplingParams(
         guided_decoding: Optional[GuidedDecodingParams] = None,
         logit_bias: Optional[Union[Dict[int, float], Dict[str, float]]] = None,
         allowed_token_ids: Optional[List[int]] = None,
+        std_output_tokens: Optional[List[int]] = None,
     ) -> "SamplingParams":
         if logit_bias is not None:
             logit_bias = {
@@ -279,6 +284,7 @@ class SamplingParams(
             guided_decoding=guided_decoding,
             logit_bias=logit_bias,
             allowed_token_ids=allowed_token_ids,
+            std_output_tokens=std_output_tokens,
         )
 
     def __post_init__(self) -> None:
@@ -474,7 +480,8 @@ class SamplingParams(
             "spaces_between_special_tokens="
             f"{self.spaces_between_special_tokens}, "
             f"truncate_prompt_tokens={self.truncate_prompt_tokens}), "
-            f"guided_decoding={self.guided_decoding}")
+            f"guided_decoding={self.guided_decoding}, "
+            f"std_output_tokens={self.std_output_tokens}")
 
 
 class BeamSearchParams(

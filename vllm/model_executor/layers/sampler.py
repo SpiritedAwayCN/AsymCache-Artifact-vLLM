@@ -279,6 +279,18 @@ class Sampler(nn.Module):
             include_gpu_probs_tensor=self.include_gpu_probs_tensor,
             modify_greedy_probs=self._should_modify_greedy_probs_inplace,
         )
+        # if given standard output tokens, sample next token in std_output_tokens
+        for i, seq_group in enumerate(sampling_metadata.seq_groups):
+            sampling_params = seq_group.sampling_params
+            if sampling_params.std_output_tokens:
+                if sampling_params.std_output_tokens_next_idx == len(sampling_params.std_output_tokens):
+                    # sample <eos> if std_output ends
+                    maybe_deferred_sample_results[i] = ([128009],) + maybe_deferred_sample_results[i][1:]
+                else:
+                    maybe_deferred_sample_results[i] = \
+                        ([sampling_params.std_output_tokens[sampling_params.std_output_tokens_next_idx]],) + \
+                        maybe_deferred_sample_results[i][1:]
+                    sampling_params.std_output_tokens_next_idx += 1
 
         if self.include_gpu_probs_tensor:
             # Since we will defer sampler result Pythonization,
