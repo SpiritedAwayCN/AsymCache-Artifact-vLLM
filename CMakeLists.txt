@@ -81,6 +81,20 @@ endif()
 # so there is no need to do this explicitly with check_language/enable_language,
 # etc.
 #
+find_package(CUDA REQUIRED)
+find_library(NVTOOLSEXT_LIBRARY
+             NAMES nvToolsExt
+             PATH_SUFFIXES lib)
+
+if (NVTOOLSEXT_LIBRARY)
+    message(STATUS "Found nvToolsExt library: ${NVTOOLSEXT_LIBRARY}")
+else()
+    message(FATAL_ERROR "Could not find nvToolsExt library")
+endif()
+add_library(CUDA::nvToolsExt SHARED IMPORTED)
+set_target_properties(CUDA::nvToolsExt PROPERTIES
+ IMPORTED_LOCATION ${NVTOOLSEXT_LIBRARY}
+)
 find_package(Torch REQUIRED)
 
 #

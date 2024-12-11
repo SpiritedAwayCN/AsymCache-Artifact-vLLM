@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from functools import wraps
 from typing import (TYPE_CHECKING, Any, Dict, Generic, Iterable, List,
-                    Optional, Type, TypeVar)
+                    Optional, Type, TypeVar, Union)
 
 import torch
 from torch import is_tensor
@@ -18,7 +18,9 @@ if TYPE_CHECKING:
     from vllm.attention import AttentionMetadata
     from vllm.attention.backends.abstract import AttentionBackend
     from vllm.model_executor import SamplingMetadata
-
+    
+from vllm.core.block_manager_v1 import BlockSpaceManagerV1
+from vllm.core.block_manager_v2 import BlockSpaceManagerV2
 logger = init_logger(__name__)
 
 T = TypeVar('T', bound="BroadcastableModelInput")
@@ -256,6 +258,7 @@ class ModelRunnerBase(ABC, Generic[T]):
         kv_caches: Optional[List[torch.Tensor]],
         intermediate_tensors: Optional[IntermediateTensors],
         num_steps: int = 1,
+        block_manager: Optional[Union[BlockSpaceManagerV1, BlockSpaceManagerV2]] = None
     ) -> Optional[List[SamplerOutput]]:
         """
         Execute the model on the given input.

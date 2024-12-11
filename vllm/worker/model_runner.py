@@ -57,7 +57,8 @@ from vllm.worker.model_runner_base import (
     _add_sampling_metadata_broadcastable_dict,
     _init_attn_metadata_from_tensor_dict,
     _init_sampling_metadata_from_tensor_dict, dump_input_when_exception)
-
+from vllm.core.block_manager_v1 import BlockSpaceManagerV1
+from vllm.core.block_manager_v2 import BlockSpaceManagerV2
 if TYPE_CHECKING:
     from vllm.attention.backends.abstract import AttentionBackend
 
@@ -1679,10 +1680,10 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         kv_caches: List[torch.Tensor],
         intermediate_tensors: Optional[IntermediateTensors] = None,
         num_steps: int = 1,
+        block_manager: Optional[Union[BlockSpaceManagerV1, BlockSpaceManagerV2]] = None
     ) -> Optional[Union[List[SamplerOutput], IntermediateTensors]]:
         if num_steps > 1:
             raise ValueError("num_steps > 1 is not supported in ModelRunner")
-
         if self.lora_config:
             assert model_input.lora_requests is not None
             assert model_input.lora_mapping is not None
@@ -1721,8 +1722,9 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         # NOTE: The receive operation is blocking
         bypass_model_exec = False
         if self.need_recv_kv(model_input, kv_caches):
+            get_disagg_group().send_hash(model_input, block_manager.block_size)
             hidden_or_intermediate_states, bypass_model_exec, model_input = \
-                get_disagg_group().recv_kv_caches_and_hidden_states(
+                get_disagg_group().direct_recv_kv_caches_and_hidden_states(
                     # model is used to know which layer the current worker
                     # is working on, so that we can receive KV for only those
                     # layers.
@@ -1761,7 +1763,8 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         # Sending KV cache in distributed KV cache transfer setting
         # NOTE: the send operation is non-blocking
         if self.need_send_kv(model_input, kv_caches):
-            get_disagg_group().send_kv_caches_and_hidden_states(
+            hashes = get_disagg_group().recv_hash()
+            get_disagg_group().direct_send_kv_caches_and_hidden_states(
                 # model_executable is used to know which layer the current
                 # worker is working on, so that we can send KV for only those
                 # layers.

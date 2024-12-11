@@ -201,7 +201,7 @@ def test_dummy_data_with_sad_kwarg_overrides(use_dummy_data_mock,
     ctx = build_model_context(DUMMY_MODEL_ID,
                               mm_processor_kwargs=mm_processor_kwargs)
     mm_registry = MultiModalRegistry()
-    mm_registry.init_mm_limits_per_prompt(ctx.model_config)
+    mm_registry.init_mm_limits_per_prompt(model_config)
 
     # NOTE: seq_len is thrown away here since this will leverage the
     # default dummy data factory that we have patched in, whose seq

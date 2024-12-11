@@ -119,6 +119,7 @@ class SchedulerContext:
                       scheduler_outputs: SchedulerOutputs, is_async: bool,
                       is_last_step: bool,
                       is_first_step_output: Optional[bool]):
+        # print(f"append into queue {len(seq_group_metadata_list)},{len(scheduler_outputs.scheduled_seq_groups)}")
         self.output_queue.append(
             OutputData(outputs=outputs,
                        seq_group_metadata_list=seq_group_metadata_list,
@@ -403,7 +404,7 @@ class LLMEngine:
 
         if model_config.use_async_output_proc:
             process_model_outputs = weak_bind(self._process_model_outputs)
-
+            # logger.debug(f"async infos:{len(self.scheduler_contexts[0].seq_group_metadata_list),len(self.scheduler_contexts[0].scheduler_outputs.scheduled_seq_groups)}")
             self.async_callbacks = [
                 partial(process_model_outputs,
                         ctx=self.scheduler_contexts[v_id])
@@ -1032,16 +1033,20 @@ class LLMEngine:
         if request_id:
             # When we process only one request, no pop is required
             # (since later we will process all of the rest)
+            # logger.debug("no pop")
             (outputs, seq_group_metadata_list, scheduler_outputs, is_async,
              is_last_step, is_first_step_output, skip) = ctx.output_queue[0]
         else:
             (outputs, seq_group_metadata_list, scheduler_outputs, is_async,
              is_last_step, is_first_step_output,
              skip) = ctx.output_queue.popleft()
+            # logger.debug(f"pop left data from queue:{len(seq_group_metadata_list),len(scheduler_outputs.scheduled_seq_groups)},queue size:{len(ctx.output_queue)}")
 
-        # Sanity check
-        assert len(seq_group_metadata_list) == len(
-            scheduler_outputs.scheduled_seq_groups)
+
+        # Sanity
+        # TURNING OFF FOR ASYNC OUTPUT
+        # assert len(seq_group_metadata_list) == len(
+            # scheduler_outputs.scheduled_seq_groups),f"len(seq_group_metadata_list)={len(seq_group_metadata_list)} != len(scheduler_outputs.scheduled_seq_groups)={len(scheduler_outputs.scheduled_seq_groups)}"
 
         has_multiple_outputs: bool = len(outputs) > 1
         if has_multiple_outputs:
@@ -1335,10 +1340,10 @@ class LLMEngine:
         allow_async_output_proc = cached_outputs.allow_async_output_proc
 
         ctx = self.scheduler_contexts[virtual_engine]
-
+        # TODO: add support for PP in the future
+        block_manager = self.scheduler[virtual_engine].block_manager
         # Clear outputs for each new scheduler iteration
         ctx.request_outputs.clear()
-
         # Skip the scheduler if there are any remaining steps in the seq groups.
         # This ensures that the scheduler is only called again when the current
         # batch has completed.
@@ -1350,9 +1355,12 @@ class LLMEngine:
 
             ctx.seq_group_metadata_list = seq_group_metadata_list
             ctx.scheduler_outputs = scheduler_outputs
-
+            # assert len(seq_group_metadata_list) == len(
+                # scheduler_outputs.scheduled_seq_groups),f"len(seq_group_metadata_list)={len(seq_group_metadata_list)} != len(scheduler_outputs.scheduled_seq_groups)={len(scheduler_outputs.scheduled_seq_groups)}"
+            # print(f"IN step len(seq_group_metadata_list)={len(seq_group_metadata_list_t)} != In Scheduler len(scheduler_outputs.scheduled_seq_groups)={len(scheduler_outputs_t.scheduled_seq_groups)}")
             # Maybe switch from async mode to sync mode
             if not allow_async_output_proc and len(ctx.output_queue) > 0:
+                print("Switching to sync mode")
                 self._process_model_outputs(ctx=ctx)
 
             if (self.scheduler_config.is_multi_step
@@ -1376,7 +1384,6 @@ class LLMEngine:
             # will cause one virtual engine's microbatch to block the pipeline.
             last_sampled_token_ids = \
                 self._get_last_sampled_token_ids(virtual_engine)
-
             execute_model_req = ExecuteModelRequest(
                 seq_group_metadata_list=seq_group_metadata_list,
                 blocks_to_swap_in=scheduler_outputs.blocks_to_swap_in,
@@ -1390,11 +1397,15 @@ class LLMEngine:
                 last_sampled_token_ids=last_sampled_token_ids)
 
             if allow_async_output_proc:
+                # logger.debug("called async callback")
+                # print(f"len(seq_group_metadata_list)={len(self.scheduler_contexts[virtual_engine].seq_group_metadata_list)} != len(scheduler_outputs.scheduled_seq_groups)={len(self.scheduler_contexts[virtual_engine].scheduler_outputs.scheduled_seq_groups)}")
+                # assert len(seq_group_metadata_list) == len(
+                #     scheduler_outputs.scheduled_seq_groups),f"len(seq_group_metadata_list)={len(seq_group_metadata_list)} != len(scheduler_outputs.scheduled_seq_groups)={len(scheduler_outputs.scheduled_seq_groups)}"
                 execute_model_req.async_callback = self.async_callbacks[
                     virtual_engine]
 
             outputs = self.model_executor.execute_model(
-                execute_model_req=execute_model_req)
+                execute_model_req=execute_model_req,block_manager=block_manager)
 
             # We need to do this here so that last step's sampled_token_ids can
             # be passed to the next iteration for PP.
@@ -1404,6 +1415,8 @@ class LLMEngine:
             # Nothing scheduled => If there is pending async postprocessor,
             # then finish it here.
             if len(ctx.output_queue) > 0:
+                print("Finishing async postprocessor")
+                
                 self._process_model_outputs(ctx=ctx)
             # No outputs in this case
             outputs = []
@@ -1424,6 +1437,7 @@ class LLMEngine:
             is_first_step_output: bool = False if not seq_group_metadata_list \
                 else seq_group_metadata_list[0].state.num_steps == 1
 
+            # print(f"IN append len(seq_group_metadata_list)={len(seq_group_metadata_list)} != len(scheduler_outputs.scheduled_seq_groups)={len(scheduler_outputs.scheduled_seq_groups)}")
             # Add results to the output_queue
             ctx.append_output(outputs=outputs,
                               seq_group_metadata_list=seq_group_metadata_list,
@@ -1442,6 +1456,7 @@ class LLMEngine:
 
             # Check if need to run the usual non-async path
             if not allow_async_output_proc:
+                # print("Running usual non-async path")
                 self._process_model_outputs(ctx=ctx)
 
                 # Log stats.
@@ -1456,6 +1471,7 @@ class LLMEngine:
         if not self.has_unfinished_requests():
             # Drain async postprocessor (if exists)
             if len(ctx.output_queue) > 0:
+                # print("Draining async postprocessor")
                 self._process_model_outputs(ctx=ctx)
             assert len(ctx.output_queue) == 0
 

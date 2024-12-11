@@ -37,7 +37,7 @@ from vllm.distributed.kv_transfer.kv_pipe.torch_distributed_pipe import (
     TorchDistributedPipe)
 from vllm.logger import init_logger
 from vllm.sequence import IntermediateTensors
-
+import threading
 logger = init_logger(__name__)
 
 # check VLLM_DISTRIBUTERD_KV_ROLE and set corresponding flags
@@ -81,7 +81,7 @@ class KV_transfer_agent:
         self.recv_buffer: Optional[KVLookupBufferBase] = None
 
         SimpleKVLookupBuffer = sklb.SimpleKVLookupBuffer
-
+        self.transport_thread: Optional[threading.Thread] = None
         # In disaggregated prefill, the prefill vLLM only uses send pipe
         # and the decode vLLM only uses recv pipe
         # In remote KV cache store, vLLM will use both send pipe and recv pipe
@@ -166,6 +166,7 @@ class KV_transfer_agent:
         # query_lens contains new KV caches that are added to vLLM.
         # so we will send them to decode instance
         # FIXME(Kuntai): This assume that all requests are prefill.
+
         for idx, slen in enumerate(seq_lens):
             start_pos = sum(seq_lens[:idx])
             end_pos = start_pos + slen
@@ -196,6 +197,55 @@ class KV_transfer_agent:
 
         logger.debug("[rank%d]: KV send DONE.", torch.distributed.get_rank())
 
+    def direct_send_kv_caches_and_hidden_states(
+        self,
+        model_executable: torch.nn.Module,
+        model_input: "ModelInputForGPUWithSamplingMetadata",
+        kv_caches: List[torch.Tensor],
+        hidden_or_intermediate_states: Union[torch.Tensor,
+                                             IntermediateTensors],
+    ) -> None:
+        input_tokens_tensor = model_input.input_tokens
+        seq_lens = model_input.attn_metadata.seq_lens
+        slot_mapping_flat = model_input.attn_metadata.slot_mapping.flatten()
+        start_layer = model_executable.model.start_layer
+        end_layer = model_executable.model.end_layer
+
+        # query_lens contains new KV caches that are added to vLLM.
+        # so we will send them to decode instance
+        # FIXME(Kuntai): This assume that all requests are prefill.
+
+        for idx, slen in enumerate(seq_lens):
+            start_pos = sum(seq_lens[:idx])
+            end_pos = start_pos + slen
+            current_tokens = input_tokens_tensor[start_pos:end_pos]
+
+            keys, values = [], []
+
+            for layer_id in range(start_layer, end_layer):
+                kv_cache = kv_caches[layer_id - start_layer]
+
+                _, _, num_heads, head_size = kv_cache[0].shape
+
+                key_cache = kv_cache[0].reshape(-1, num_heads, head_size)
+                value_cache = kv_cache[1].reshape(-1, num_heads, head_size)
+
+                current_slot_mapping = slot_mapping_flat[start_pos:end_pos]
+                # logger.debug(f"current_slot_mapping:{current_slot_mapping}")
+                keys.append(key_cache[current_slot_mapping].unsqueeze(0))
+                values.append(value_cache[current_slot_mapping].unsqueeze(0))
+
+            keys = torch.cat(keys, dim=0)
+            values = torch.cat(values, dim=0)
+            
+            if self.send_pipe is not None:
+                logger.debug("[rank%d]: KV DIRECT send.", torch.distributed.get_rank())
+                self.send_pipe.send_tensor_list([current_tokens, torch.ones_like(current_tokens, dtype=bool), keys, values, hidden_or_intermediate_states[start_pos:end_pos]])
+                # tensor_list = [current_tokens, torch.ones_like(current_tokens, dtype=bool), keys, values, hidden_or_intermediate_states[start_pos:end_pos]]
+                # if self.transport_thread is None:
+                #     self.transport_thread = threading.Thread(target=self.send_pipe.send_tensor_list, args=(tensor_list,))
+                #     self.transport_thread.start()
+    
     def destroy(self) -> None:
         if self.send_buffer is not None:
             self.send_buffer.close()
@@ -316,7 +366,164 @@ class KV_transfer_agent:
 
         return hidden_or_intermediate_states, bypass_model_exec, model_input
 
+    def direct_recv_kv_caches_and_hidden_states(
+        self, model_executable: torch.nn.Module,
+        model_input: "ModelInputForGPUWithSamplingMetadata",
+        kv_caches: List[torch.Tensor]
+    ) -> Tuple[Union[torch.Tensor, IntermediateTensors], bool,
+               "ModelInputForGPUWithSamplingMetadata"]:
 
+        # When this flag is set to False, it means that at least for one
+        # request its corresponding KV cache or hidden state is missing.
+        # In this case we need to do prefilling to recompute missing KV cache
+        # and hidden states.
+        bypass_model_exec = True
+
+        input_tokens_tensor = model_input.input_tokens
+        seq_lens = model_input.attn_metadata.seq_lens
+        slot_mapping = model_input.attn_metadata.slot_mapping.flatten()
+
+        hidden_or_intermediate_states_for_one_req = []
+
+        input_tokens_list = []
+        num_computed_tokens_list = []
+        start_pos_list = []
+
+        # enumerate different requests
+        # FIXME(Kuntai): This impl assumes that all requests are prefill.
+        for idx, slen in enumerate(seq_lens):
+
+            start_pos = sum(seq_lens[:idx])
+            end_pos = start_pos + slen
+            current_tokens = input_tokens_tensor[start_pos:end_pos]
+            num_tokens = slen
+
+            # collecting data for rebuilding the input
+            input_tokens_list.append(current_tokens)
+            start_pos_list.append(start_pos)
+
+            # logger.debug("direct receiving")
+            receive_tensors = self.recv_pipe.receive_tensor_list()
+            input_tokens = receive_tensors[0]
+            roi = receive_tensors[1]
+            keys = receive_tensors[2]
+            values = receive_tensors[3]
+            hidden = receive_tensors[4]
+            if input_tokens is None:
+                # didn't find any match.
+                bypass_model_exec = False
+                num_computed_tokens_list.append(0)
+                continue
+            
+            num_computed_tokens = roi.shape[0]
+            num_computed_tokens_list.append(num_computed_tokens)
+
+            # check if both KV cache and the hidden states are received
+            # If not, need to redo the forwarding to compute missing states
+            if not all([(num_computed_tokens == num_tokens), hidden is not None
+                        ]):
+                bypass_model_exec = False
+
+            # update the end position based on how many tokens are cached.
+            end_pos = start_pos + num_computed_tokens
+
+            # put received KV caches into paged memory
+            for i in range(model_executable.model.start_layer,
+                           model_executable.model.end_layer):
+
+                kv_cache = kv_caches[i - model_executable.model.start_layer]
+                layer = model_executable.model.layers[i]
+
+                key_cache, value_cache = kv_cache[0], kv_cache[1]
+                ops.reshape_and_cache_flash(
+                    keys[i - model_executable.model.start_layer].to(
+                        key_cache.device),
+                    values[i - model_executable.model.start_layer].to(
+                        value_cache.device),
+                    key_cache,
+                    value_cache,
+                    slot_mapping[start_pos:end_pos],
+                    layer.self_attn.attn.kv_cache_dtype,
+                    layer.self_attn.attn._k_scale,
+                    layer.self_attn.attn._v_scale,
+                )
+
+            hidden_or_intermediate_states_for_one_req.append(hidden)
+
+        if not bypass_model_exec:
+            # Some of the KV cache is not retrieved
+            # so we need to adjust model_input and redo the forwarding.
+            logger.debug(
+                "[rank%d]: Failed to receive all KVs and hidden "
+                "states, redo model forwarding.", torch.distributed.get_rank())
+            rebuilt_model_input = build_partial_prefill_input(
+                model_input,
+                input_tokens_list,
+                num_computed_tokens_list,
+                start_pos_list,
+                slot_mapping,
+                device=input_tokens_tensor.device,
+            )
+            model_input = rebuilt_model_input
+            hidden_or_intermediate_states = None
+
+        else:
+            logger.debug(
+                "[rank%d]: Successfully received all KVs and hidden "
+                "states, skip model forwarding.", torch.distributed.get_rank())
+            hidden_or_intermediate_states = torch.cat(
+                hidden_or_intermediate_states_for_one_req, dim=0)
+
+        return hidden_or_intermediate_states, bypass_model_exec, model_input
+    
+    def send_hash(
+        self,
+        model_input: "ModelInputForGPUWithSamplingMetadata",
+        block_size: Optional[int] = 16,
+    ):
+        seq_lens = model_input.attn_metadata.seq_lens
+        if len(seq_lens) == 0:
+            hash_list = [None]
+        else:
+            hash_list = []
+        # sending signals to decode
+        hash_num = 0
+        for idx, slen in enumerate(seq_lens):
+            start_pos = sum(seq_lens[:idx])
+            end_pos = start_pos + slen
+            num_of_seqs = len(model_input.sampling_metadata.seq_groups[idx].seq_ids)
+            seq_id = model_input.sampling_metadata.seq_groups[idx].seq_ids[0]
+            token_ids = model_input.sampling_metadata.seq_groups[idx].seq_data[seq_id].get_token_ids()
+            block_num = len(token_ids) // block_size
+            hash_num += block_num
+            for i in range(block_num):
+                block_token_ids = token_ids[:(i+1) * block_size]
+                tupled_token_ids = tuple(block_token_ids)
+                # logger.debug(f"RANK:{torch.distributed.get_rank()}:{block_token_ids}")
+                hash_block_token_ids = hash((tupled_token_ids,0))
+                # make hash as an tensor
+                seq_id2hash = torch.tensor([seq_id,hash_block_token_ids], dtype=torch.int64)
+                hash_list.append(seq_id2hash)
+        logger.debug(f"Send total_hash_num:{hash_num}")
+        block_hash_num = torch.tensor([-1,hash_num], dtype=torch.int64)
+        self.send_pipe.send_tensor_list([block_hash_num])
+        logger.debug(f"RANK:{torch.distributed.get_rank()}  sending hash in adapter,hash list:{hash_list}")
+        self.send_pipe.send_tensor_list(hash_list)
+        logger.debug(f"RANK:{torch.distributed.get_rank()}  sending hash complete")
+    
+    def recv_hash(self):
+        # try executing receive hash in limited time
+        # receive num of hash
+        logger.debug(f"RANK:{torch.distributed.get_rank()}  receiving hash num in adapter")
+        block_hash_num_ts_list = self.recv_pipe.receive_tensor_list(1)
+        assert len(block_hash_num_ts_list) == 1
+        block_hash_num_ts = block_hash_num_ts_list[0]
+        block_hash_num = block_hash_num_ts[1]
+        logger.debug(f"RANK:{torch.distributed.get_rank()}  receiving {block_hash_num} hashes in adapter")
+        hash_block_token_ids = self.recv_pipe.receive_tensor_list(block_hash_num)
+        logger.debug(f"RANK:{torch.distributed.get_rank()}  receiving hash complete")
+        return hash_block_token_ids
+    
 def build_partial_prefill_input(
     model_input: "ModelInputForGPUWithSamplingMetadata",
     input_tokens_list: List[torch.Tensor],
@@ -395,7 +602,13 @@ def build_partial_prefill_input(
     rebuilt_attn_metadata.slot_mapping = torch.cat(rebuilt_slot_mapping).to(
         device)
     rebuilt_attn_metadata.max_query_len = rebuilt_max_query_len
-
+    max_length = max(len(sublist) for sublist in rebuilt_block_tables)
+    # padding the lists,sublist is the list of torch.tensor
+    # print("calling rebuild outside!!!!!!!!!!!!!!!!!!!!")
+    for sublist in rebuilt_block_tables:
+        while len(sublist) < max_length:
+            # print("calling rebuild")
+            sublist.append(torch.full_like(sublist[0], 0)) 
     rebuilt_attn_metadata.block_tables = torch.tensor(
         rebuilt_block_tables,
         dtype=model_input.attn_metadata.block_tables.dtype).to(device)

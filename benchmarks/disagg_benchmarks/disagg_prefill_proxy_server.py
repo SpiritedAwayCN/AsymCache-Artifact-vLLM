@@ -38,12 +38,16 @@ async def handle_request():
             prefill_request['std_output_tokens'] = prefill_request['std_output_tokens'][:1]
 
         # finish prefill
-        async for _ in forward_request('http://162.105.146.216:8100/v1/completions',
+        # Get environment variable VLLM_PORT
+        vllm_port = os.environ.get('VLLM_PORT')
+        # print("forwarding prefill")
+        async for _ in forward_request(f'http://localhost:8100/v1/completions',
                                        prefill_request):
             continue
 
         # return decode
-        generator = forward_request('http://162.105.146.216:8200/v1/completions',
+        # print("forwarding decode")
+        generator = forward_request(f'http://localhost:8200/v1/completions',
                                     original_request_data)
         response = await make_response(generator)
         response.timeout = None

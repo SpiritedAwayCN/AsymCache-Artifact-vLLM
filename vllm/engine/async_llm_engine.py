@@ -303,6 +303,7 @@ class _AsyncLLMEngine(LLMEngine):
 
             # Maybe switch from async mode to sync mode
             if not allow_async_output_proc and len(ctx.output_queue) > 0:
+                logger.debug("1 called")
                 self._process_model_outputs(ctx=ctx)
 
             if (self.scheduler_config.is_multi_step
@@ -354,6 +355,7 @@ class _AsyncLLMEngine(LLMEngine):
                 self._update_cached_scheduler_output(virtual_engine, outputs)
         else:
             if len(ctx.output_queue) > 0:
+                logger.debug("2 called")
                 self._process_model_outputs(ctx=ctx)
             outputs = []
 
@@ -390,6 +392,7 @@ class _AsyncLLMEngine(LLMEngine):
                     scheduler_outputs.scheduled_seq_groups)
 
             if not allow_async_output_proc:
+                logger.debug("3 called")
                 self._process_model_outputs(ctx=ctx)
 
                 # Log stats.
@@ -405,6 +408,7 @@ class _AsyncLLMEngine(LLMEngine):
         if not self.has_unfinished_requests():
             # Drain async postprocessor (if exists)
             if len(ctx.output_queue) > 0:
+                logger.debug("4 called")
                 self._process_model_outputs(ctx=ctx)
             assert len(ctx.output_queue) == 0
 
