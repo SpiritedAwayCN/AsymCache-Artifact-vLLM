@@ -297,27 +297,27 @@ class TorchDistributedPipe(KVPipeBase):
         """
         if not tensors:
             return
-        # if self.transport_thread is None:
-        #     self.transport_thread = ThreadPoolExecutor(max_workers=1)
+        if self.transport_thread is None:
+            self.transport_thread = ThreadPoolExecutor(max_workers=1)
             
-        # def async_send(tensors):
-        try:
-            # Send tensors one by one
-            logger.debug(f"RANK:{torch.distributed.get_rank()}  Sending tensor list")
-            for tensor in tensors:
-                if tensor is None:
-                    tensor = self.none_tensor
-                self._send_impl(tensor)  # Send each tensor using the _send_impl method
-            
-            # torch.distributed.barrier()
-            logger.debug(f"RANK:{torch.distributed.get_rank()}All tensors sent")
-
-        except Exception as e:
-            logger.error("Exception in send_tensor_list: %s", e)
-            import traceback
-            traceback.print_exc()
+        def async_send(tensors):
+            try:
+                # Send tensors one by one
+                logger.debug(f"RANK:{torch.distributed.get_rank()}  Sending tensor list")
+                for tensor in tensors:
+                    if tensor is None:
+                        tensor = self.none_tensor
+                    self._send_impl(tensor)  # Send each tensor using the _send_impl method
                 
-        # self.transport_thread.submit(async_send, tensors)
+                # torch.distributed.barrier()
+                logger.debug(f"RANK:{torch.distributed.get_rank()}All tensors sent")
+
+            except Exception as e:
+                logger.error("Exception in send_tensor_list: %s", e)
+                import traceback
+                traceback.print_exc()
+                
+        self.transport_thread.submit(async_send, tensors)
         
     def receive_tensor_list(self, num_tensors: Optional[int] = 5) -> List[Optional[torch.Tensor]]:
         """
