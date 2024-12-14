@@ -310,7 +310,7 @@ class TorchDistributedPipe(KVPipeBase):
                 self._send_impl(tensor)  # Send each tensor using the _send_impl method
             
             # torch.distributed.barrier()
-            logger.debug(f"RANK:{torch.distributed.get_rank()}All tensors sent")
+            logger.debug(f"RANK:{torch.distributed.get_rank()} All tensors sent")
 
         except Exception as e:
             logger.error("Exception in send_tensor_list: %s", e)
