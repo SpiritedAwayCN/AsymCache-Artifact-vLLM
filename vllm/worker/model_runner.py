@@ -1723,6 +1723,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         bypass_model_exec = False
         if self.need_recv_kv(model_input, kv_caches):
             get_disagg_group().send_hash(model_input, block_manager.block_size)
+            # logger.debug(f"receiving tensors")
             hidden_or_intermediate_states, bypass_model_exec, model_input = \
                 get_disagg_group().direct_recv_kv_caches_and_hidden_states(
                     # model is used to know which layer the current worker
@@ -1730,7 +1731,8 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                     # layers.
                     model_executable,
                     model_input,
-                    kv_caches=kv_caches
+                    kv_caches=kv_caches,
+                    # block_manager=block_manager,
                 )
 
         multi_modal_kwargs = model_input.multi_modal_kwargs or {}

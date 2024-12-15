@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 from copy import deepcopy
 
 import torch
-from torch.distributed import Backend
+from torch.distributed import Backend,P2POp, isend, irecv
 
 import vllm.distributed.kv_transfer.kv_lookup_buffer.simple_buffer as sklb
 import vllm.envs as envs
@@ -39,7 +39,8 @@ from vllm.logger import init_logger
 from vllm.sequence import IntermediateTensors
 import threading
 logger = init_logger(__name__)
-
+from vllm.core.block_manager_v1 import BlockSpaceManagerV1
+from vllm.core.block_manager_v2 import BlockSpaceManagerV2
 # check VLLM_DISTRIBUTERD_KV_ROLE and set corresponding flags
 assert envs.VLLM_DISTRIBUTED_KV_ROLE in [None, "producer", "consumer", "both"],\
     "VLLM_DISTRIBUTERD_KV_ROLE can only be producer, consumer or both."
@@ -82,6 +83,8 @@ class KV_transfer_agent:
 
         SimpleKVLookupBuffer = sklb.SimpleKVLookupBuffer
         self.transport_thread: Optional[threading.Thread] = None
+        self.source_rank = group_ranks[0][0]
+        self.target_rank = group_ranks[0][1]
         # In disaggregated prefill, the prefill vLLM only uses send pipe
         # and the decode vLLM only uses recv pipe
         # In remote KV cache store, vLLM will use both send pipe and recv pipe
@@ -404,10 +407,14 @@ class KV_transfer_agent:
 
             # logger.debug("direct receiving")
             receive_tensors = self.recv_pipe.receive_tensor_list()
+            
             input_tokens = receive_tensors[0]
+            
             roi = receive_tensors[1]
+            
             keys = receive_tensors[2]
             values = receive_tensors[3]
+            
             hidden = receive_tensors[4]
             if input_tokens is None:
                 # didn't find any match.
@@ -466,7 +473,6 @@ class KV_transfer_agent:
             )
             model_input = rebuilt_model_input
             hidden_or_intermediate_states = None
-
         else:
             logger.debug(
                 "[rank%d]: Successfully received all KVs and hidden "
@@ -523,6 +529,185 @@ class KV_transfer_agent:
         hash_block_token_ids = self.recv_pipe.receive_tensor_list(block_hash_num)
         logger.debug(f"RANK:{torch.distributed.get_rank()}  receiving hash complete")
         return hash_block_token_ids
+    
+    def Async_direct_send_kv_caches_and_hidden_states(
+        self,
+        model_executable: torch.nn.Module,
+        model_input: "ModelInputForGPUWithSamplingMetadata",
+        kv_caches: List[torch.Tensor],
+        hidden_or_intermediate_states: Union[torch.Tensor, IntermediateTensors],
+    ) -> None:
+        input_tokens_tensor = model_input.input_tokens
+        seq_lens = model_input.attn_metadata.seq_lens
+        slot_mapping_flat = model_input.attn_metadata.slot_mapping.flatten()
+        start_layer = model_executable.model.start_layer
+        end_layer = model_executable.model.end_layer
+
+        # 构建批量发送操作
+        send_ops = []
+
+        # 构建批量发送操作
+        for idx, slen in enumerate(seq_lens):
+            start_pos = sum(seq_lens[:idx])
+            end_pos = start_pos + slen
+
+            current_tokens = input_tokens_tensor[start_pos:end_pos]
+            keys, values = [], []
+
+            for layer_id in range(start_layer, end_layer):
+                kv_cache = kv_caches[layer_id - start_layer]
+                _, _, num_heads, head_size = kv_cache[0].shape
+
+                key_cache = kv_cache[0].reshape(-1, num_heads, head_size)
+                value_cache = kv_cache[1].reshape(-1, num_heads, head_size)
+
+                current_slot_mapping = slot_mapping_flat[start_pos:end_pos]
+                keys.append(key_cache[current_slot_mapping].unsqueeze(0))
+                values.append(value_cache[current_slot_mapping].unsqueeze(0))
+
+            keys = torch.cat(keys, dim=0)
+            values = torch.cat(values, dim=0)
+
+            # 分别将每个张量加入发送操作
+            send_ops.append(P2POp(isend, current_tokens, self.target_rank))
+            send_ops.append(P2POp(isend, torch.ones_like(current_tokens, dtype=bool), self.target_rank))
+            send_ops.append(P2POp(isend, keys, self.target_rank))
+            send_ops.append(P2POp(isend, values, self.target_rank))
+            send_ops.append(P2POp(isend, hidden_or_intermediate_states[start_pos:end_pos], self.target_rank))
+
+        # 批量发送
+        reqs = torch.distributed.batch_isend_irecv(send_ops)
+        for req in reqs:
+            req.wait()
+
+        logger.debug("[rank%d]: Batch send KVs and hidden states.", torch.distributed.get_rank())
+
+
+    def async_direct_recv_kv_caches_and_hidden_states(
+        self, model_executable: torch.nn.Module,
+        model_input: "ModelInputForGPUWithSamplingMetadata",
+        kv_caches: List[torch.Tensor],
+        block_manager: Union[BlockSpaceManagerV1, BlockSpaceManagerV2]
+    ) -> Tuple[Union[torch.Tensor, IntermediateTensors], bool, "ModelInputForGPUWithSamplingMetadata"]:
+
+        bypass_model_exec = True
+        input_tokens_tensor = model_input.input_tokens
+        seq_lens = model_input.attn_metadata.seq_lens
+        slot_mapping = model_input.attn_metadata.slot_mapping.flatten()
+
+        hidden_or_intermediate_states_for_one_req = []
+        recv_ops = []
+        received_tensors = []
+
+        input_tokens_list = []
+        num_computed_tokens_list = []
+        start_pos_list = []
+
+        for idx, slen in enumerate(seq_lens):
+            
+            start_pos = sum(seq_lens[:idx])
+            end_pos = start_pos + slen
+            current_tokens = input_tokens_tensor[start_pos:end_pos]
+            num_tokens = slen
+            
+            # collecting data for rebuilding the input
+            input_tokens_list.append(current_tokens)
+            start_pos_list.append(start_pos)
+            
+            # 为 current_tokens 分配缓冲区
+            recv_current_tokens = torch.empty([slen], dtype=torch.float32, device="cuda")
+            recv_ops.append(P2POp(irecv, recv_current_tokens, self.source_rank))
+
+            # 为布尔掩码张量分配缓冲区
+            recv_mask = torch.empty([slen], dtype=torch.bool, device="cuda")
+            recv_ops.append(P2POp(irecv, recv_mask, self.source_rank))
+
+            # 为 keys 和 values 分配缓冲区
+            # num_layers = end_layer - start_layer
+            total_blocks = block_manager.num_total_gpu_blocks
+            block_size = block_manager.block_size
+            num_heads, head_size = kv_caches[0][0].shape[2:]  # 假设 shape = [total_blocks,block_size,numofhead,head_dim]
+            keys = torch.empty([total_blocks, block_size, num_heads, head_size], dtype=torch.float32, device="cuda")
+            values = torch.empty([total_blocks, block_size, num_heads, head_size], dtype=torch.float32, device="cuda")
+            recv_ops.append(P2POp(irecv, keys, self.source_rank))
+            recv_ops.append(P2POp(irecv, values, self.source_rank))
+
+            # 为 hidden_or_intermediate_states 分配缓冲区
+            hidden_dim = num_heads*head_size
+            hidden = torch.empty([slen, hidden_dim], dtype=torch.float32, device="cuda")
+            recv_ops.append(P2POp(irecv, hidden, self.source_rank))
+
+            # 存储接收缓冲区的引用
+            received_tensors.append((recv_current_tokens, recv_mask, keys, values, hidden))
+
+            # 批量接收
+            reqs = torch.distributed.batch_isend_irecv(recv_ops)
+            logger.debug("batch receiving")
+            for req in reqs:
+                req.wait()
+            logger.debug("batch complete")
+            if recv_current_tokens is None:
+                bypass_model_exec = False
+                num_computed_tokens_list.append(0)
+                continue
+            
+            logger.debug("[rank%d]: Successfully received all tensors.", torch.distributed.get_rank())
+            num_computed_tokens = recv_mask.shape[0]
+            logger.debug("here1")
+            num_computed_tokens_list.append(num_computed_tokens)
+            logger.debug("here2")
+            logger.debug(f"token received:{recv_current_tokens}")
+            for recv_tensor in received_tensors:
+                if recv_tensor is None:
+                    bypass_model_exec = False
+                    continue
+            
+            if not all([(num_computed_tokens == num_tokens), hidden is not None
+                        ]):
+                bypass_model_exec = False
+            
+            end_pos = start_pos + num_computed_tokens
+            
+                        # put received KV caches into paged memory
+            for i in range(model_executable.model.start_layer,
+                           model_executable.model.end_layer):
+                kv_cache = kv_caches[i - model_executable.model.start_layer]
+                layer = model_executable.model.layers[i]
+
+                key_cache, value_cache = kv_cache[0], kv_cache[1]
+                ops.reshape_and_cache_flash(
+                    keys[i - model_executable.model.start_layer].to(
+                        key_cache.device),
+                    values[i - model_executable.model.start_layer].to(
+                        value_cache.device),
+                    key_cache,
+                    value_cache,
+                    slot_mapping[start_pos:end_pos],
+                    layer.self_attn.attn.kv_cache_dtype,
+                    layer.self_attn.attn._k_scale,
+                    layer.self_attn.attn._v_scale,
+                )            
+            # 处理接收的张量
+            hidden_or_intermediate_states_for_one_req.append(hidden)
+
+        if not bypass_model_exec:
+            logger.debug("[rank%d]: Failed to receive all data, redo model forwarding.", torch.distributed.get_rank())
+            rebuilt_model_input = build_partial_prefill_input(
+                model_input,
+                input_tokens_list,
+                num_computed_tokens_list,
+                start_pos_list,
+                slot_mapping,
+                device=input_tokens_tensor.device,
+            )
+            model_input = rebuilt_model_input
+            hidden_or_intermediate_states = None
+        else:
+            logger.debug("[rank%d]: Successfully received all data, skip model forwarding.", torch.distributed.get_rank())
+            hidden_or_intermediate_states = torch.cat(hidden_or_intermediate_states_for_one_req, dim=0)
+
+        return hidden_or_intermediate_states, bypass_model_exec, model_input
+
     
 def build_partial_prefill_input(
     model_input: "ModelInputForGPUWithSamplingMetadata",
