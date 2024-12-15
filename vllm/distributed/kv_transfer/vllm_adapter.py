@@ -508,25 +508,25 @@ class KV_transfer_agent:
                 # logger.debug(f"RANK:{torch.distributed.get_rank()}:{block_token_ids}")
                 hash_block_token_ids = hash((tupled_token_ids,0))
                 # make hash as an tensor
-                seq_id2hash = torch.tensor([seq_id,hash_block_token_ids], dtype=torch.int64)
+                seq_id2hash = torch.tensor([seq_id,hash_block_token_ids], dtype=torch.int64, device="cpu")
                 hash_list.append(seq_id2hash)
         logger.debug(f"Send total_hash_num:{hash_num}")
-        block_hash_num = torch.tensor([-1,hash_num], dtype=torch.int64)
-        self.send_pipe.send_tensor_list([block_hash_num])
+        block_hash_num = torch.tensor([-1,hash_num], dtype=torch.int64,device="cpu")
+        self.send_signal_pipe.send_tensor_list([block_hash_num])
         logger.debug(f"RANK:{torch.distributed.get_rank()}  sending hash in adapter,hash list:{hash_list}")
-        self.send_pipe.send_tensor_list(hash_list)
+        self.send_signal_pipe.send_tensor_list(hash_list)
         logger.debug(f"RANK:{torch.distributed.get_rank()}  sending hash complete")
     
     def recv_hash(self):
         # try executing receive hash in limited time
         # receive num of hash
         logger.debug(f"RANK:{torch.distributed.get_rank()}  receiving hash num in adapter")
-        block_hash_num_ts_list = self.recv_pipe.receive_tensor_list(1)
+        block_hash_num_ts_list = self.recv_signal_pipe.receive_tensor_list(1)
         assert len(block_hash_num_ts_list) == 1
         block_hash_num_ts = block_hash_num_ts_list[0]
         block_hash_num = block_hash_num_ts[1]
         logger.debug(f"RANK:{torch.distributed.get_rank()}  receiving {block_hash_num} hashes in adapter")
-        hash_block_token_ids = self.recv_pipe.receive_tensor_list(block_hash_num)
+        hash_block_token_ids = self.recv_signal_pipe.receive_tensor_list(block_hash_num)
         logger.debug(f"RANK:{torch.distributed.get_rank()}  receiving hash complete")
         return hash_block_token_ids
     

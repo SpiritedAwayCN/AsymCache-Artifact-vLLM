@@ -159,6 +159,7 @@ class TorchDistributedPipe(KVPipeBase):
             dst=self.target_rank_for_send,
             group=self.device_group,
         )
+        # logger.debug("metadata inside sent")
 
     def _recv_metadata(self) -> torch.Tensor:
         """Receive the metadata buffer from the target rank.
@@ -171,6 +172,7 @@ class TorchDistributedPipe(KVPipeBase):
             race conditions during sending/receiving. Therefore, the metadata
             buffer can be reused
         """
+        # logger.debug("Inside Receiving metadata")
         torch.distributed.recv(
             self.rcv_metadata_buffer,
             src=self.target_rank_for_recv,
@@ -189,7 +191,9 @@ class TorchDistributedPipe(KVPipeBase):
         """
 
         metadata = self._make_metadata(tensor)
+        # logger.debug(f"Sending metadata:{metadata}")
         self._send_metadata(metadata)
+        # logger.debug("Metadata sent")
         torch.distributed.send(tensor.to(self.device),
                                dst=self.target_rank_for_send,
                                group=self.device_group)
@@ -204,12 +208,15 @@ class TorchDistributedPipe(KVPipeBase):
         Returns:
             - buffer: the received tensor, on self.device
         """
+        # logger.debug("Receiving metadata")
         d_metadata = self._recv_metadata()
+        # logger.debug(f"Received metadata:{d_metadata}")
         buffer = self._prepare_recv_buffer(d_metadata)
-
+        # logger.debug("ready to receive tensor")
         torch.distributed.recv(buffer,
                                src=self.target_rank_for_recv,
                                group=self.device_group)
+        # logger.debug("Received tensor in impl")
 
         return buffer
 
@@ -297,27 +304,27 @@ class TorchDistributedPipe(KVPipeBase):
         """
         if not tensors:
             return
-        # if self.transport_thread is None:
-        #     self.transport_thread = ThreadPoolExecutor(max_workers=1)
+        if self.transport_thread is None:
+            self.transport_thread = ThreadPoolExecutor(max_workers=1)
             
-        # def async_send(tensors):
-        try:
-            # Send tensors one by one
-            logger.debug(f"RANK:{torch.distributed.get_rank()}  Sending tensor list")
-            for tensor in tensors:
-                if tensor is None:
-                    tensor = self.none_tensor
-                self._send_impl(tensor)  # Send each tensor using the _send_impl method
+        def async_send(tensors):
             
-            # torch.distributed.barrier()
-            logger.debug(f"RANK:{torch.distributed.get_rank()} All tensors sent")
-
-        except Exception as e:
-            logger.error("Exception in send_tensor_list: %s", e)
-            import traceback
-            traceback.print_exc()
+            try:
+                # Send tensors one by one
+                logger.debug(f"RANK:{torch.distributed.get_rank()}  Sending {len(tensors)} tensor")
+                for tensor in tensors:
+                    if tensor is None:
+                        tensor = self.none_tensor
+                    self._send_impl(tensor)  # Send each tensor using the _send_impl method
                 
-        # self.transport_thread.submit(async_send, tensors)
+                logger.debug(f"RANK:{torch.distributed.get_rank()} All tensors sent")
+
+            except Exception as e:
+                logger.error("Exception in send_tensor_list: %s", e)
+                import traceback
+                traceback.print_exc()
+                
+        self.transport_thread.submit(async_send, tensors)
         
     def receive_tensor_list(self, num_tensors: Optional[int] = 5) -> List[Optional[torch.Tensor]]:
         """
@@ -333,7 +340,7 @@ class TorchDistributedPipe(KVPipeBase):
         received_tensors = []
         # if self.transport_thread is None:
         #     self.transport_thread = ThreadPoolExecutor(max_workers=1)
-        # def non_async_recv(num_tensors=num_tensors):
+        #def non_async_recv(num_tensors=num_tensors):
         try:
             logger.debug(f"Receiving {num_tensors} tensors")
             
