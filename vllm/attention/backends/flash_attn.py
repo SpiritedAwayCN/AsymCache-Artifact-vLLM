@@ -577,11 +577,11 @@ class FlashAttentionMetadataBuilder(
                                                 self.runner.pin_memory)
             seq_used_k_2_tensor = async_tensor_h2d(seq_used_k_2, torch.int, device,
                                                 self.runner.pin_memory)
-            with open("/home/infer/chenyilei/usedk.txt", "a") as f:
-                f.write(f"seq_lens_firstseg: {query_lens_2}\n")
-                f.write(f"seq_lens_secondseg: {query_lens_3}\n")
-                f.write(f"seq_used_k: {seq_used_k}\n")
-                f.write(f"seq_used_k_2: {seq_used_k_2}\n\n")
+            # with open("/home/infer/chenyilei/usedk.txt", "a") as f:
+            #     f.write(f"seq_lens_firstseg: {query_lens_2}\n")
+            #     f.write(f"seq_lens_secondseg: {query_lens_3}\n")
+            #     f.write(f"seq_used_k: {seq_used_k}\n")
+            #     f.write(f"seq_used_k_2: {seq_used_k_2}\n\n")
             # print('new meta builder', flush=True)
             return FlashAttentionMetadata(
                 num_prefills=self.num_prefills,
