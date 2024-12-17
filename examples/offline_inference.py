@@ -16,9 +16,9 @@ prompts = [
 # Create a sampling params object.
 sampling_params = [
     SamplingParams(temperature=0),
-    SamplingParams(temperature=0, std_output_tokens=[499, 527, 304, 264, 13270], max_tokens=30),
-    SamplingParams(temperature=0, std_output_tokens=[527, 304, 264, 13270], max_tokens=30),
-    SamplingParams(temperature=0, std_output_tokens=[304, 264, 13270], max_tokens=30),
+    SamplingParams(temperature=0, std_output_str=" you are in a rush", max_tokens=30),
+    SamplingParams(temperature=0, std_output_str=" today is a new day, so I'd like to", max_tokens=30),
+    SamplingParams(temperature=0, std_output_str="today is a new day, so I'd like to", max_tokens=30),
     SamplingParams(temperature=0, std_output_tokens=[264, 13270], max_tokens=30),
     SamplingParams(temperature=0, std_output_tokens=[13270], max_tokens=30),
     SamplingParams(temperature=0, std_output_tokens=[], max_tokens=30),

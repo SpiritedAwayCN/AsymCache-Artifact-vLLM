@@ -204,6 +204,8 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
             
             self.input_tokens_seg2[0].clear()  # type: ignore
             self.input_positions_seg2[0].clear()  # type: ignore
+            self.input_tokens_seg3[0].clear()
+            self.input_positions_seg3[0].clear()
 
         def __init__(
             self,
@@ -253,9 +255,11 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
             encoder_seq_len: int = 0,
             
             # MODIFIED: For cache segment in the middle
-            suffix_computed_block_locs: List[int] = [0, 0],
+            suffix_computed_block_locs: List[int] = [0, 0, 0, 0],
             input_tokens_seg2: Optional[List[List[int]]] = None,
             input_positions_seg2: Optional[List[List[int]]] = None,
+            input_tokens_seg3: Optional[List[List[int]]] = None,
+            input_positions_seg3: Optional[List[List[int]]] = None,
             # query_lens_seg2: Optional[List[int]] = None,
         ):
             if reinit:
@@ -360,6 +364,18 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
                     else:
                         for seq_id in range(len(self.seq_ids)):
                             self.input_positions_seg2[seq_id].clear()
+
+                    if input_tokens_seg3:
+                        self.input_tokens_seg3 = input_tokens_seg3
+                    else:
+                        for seq_id in range(len(self.seq_ids)):
+                            self.input_tokens_seg3[seq_id].clear()
+                    
+                    if input_positions_seg3:
+                        self.input_positions_seg3 = input_positions_seg3
+                    else:
+                        for seq_id in range(len(self.seq_ids)):
+                            self.input_positions_seg3[seq_id].clear()
                     
                     # if query_lens_seg2:
                     #     self.query_lens_seg2 = query_lens_seg2
@@ -389,6 +405,8 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
                 # MODIFIED: For cache segment in the middle
                 self.input_tokens_seg2 = input_tokens_seg2 or []
                 self.input_positions_seg2 = input_positions_seg2 or []
+                self.input_tokens_seg3 = input_tokens_seg3 or []
+                self.input_posisions_seg3 = input_positions_seg3 or []
                 # self.query_lens_seg2 = query_lens_seg2 or []
 
             self.prompt_adapter_request = prompt_adapter_request
@@ -422,6 +440,8 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
             # MODIFIED: For cache segment in the middle
             self.input_tokens_seg2 = [[] for _ in range(self.n_seqs)]
             self.input_positions_seg2 = [[] for _ in range(self.n_seqs)]
+            self.input_tokens_seg3 = [[] for _ in range(self.n_seqs)]
+            self.input_positions_seg3 = [[] for _ in range(self.n_seqs)]
             # self.query_lens_seg2 = [0] * self.n_seqs
 
     def gen_inter_data_builder(self, num_seqs: int):
@@ -587,8 +607,29 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
             
             uncomputed_start = prefix_cache_len - context_len
             context_len = prefix_cache_len
-            
-            if inter_data.suffix_computed_block_locs[0] > 0:
+            if inter_data.suffix_computed_block_locs[2] > 0:
+                locs = inter_data.suffix_computed_block_locs
+
+                inter_data.input_tokens_seg3[seq_idx] = inter_data.input_tokens[
+                    seq_idx][locs[3]:]
+                inter_data.input_positions_seg3[seq_idx] = inter_data.input_positions[
+                    seq_idx][locs[3]:]
+                
+                inter_data.input_tokens_seg2[seq_idx] = inter_data.input_tokens[
+                    seq_idx][locs[1]:locs[2]]
+                inter_data.input_positions_seg2[seq_idx] = inter_data.input_positions[
+                    seq_idx][locs[1]:locs[2]]
+                
+                inter_data.input_tokens[seq_idx] = inter_data.input_tokens[
+                    seq_idx][uncomputed_start:locs[0]]
+                inter_data.input_positions[seq_idx] = inter_data.input_positions[
+                    seq_idx][uncomputed_start:locs[0]]
+
+                inter_data.query_lens[seq_idx] = \
+                    locs[0] - uncomputed_start + \
+                    locs[2] - locs[1] + \
+                    seq_len - locs[3]
+            elif inter_data.suffix_computed_block_locs[0] > 0:
                 inter_data.input_tokens_seg2[seq_idx] = inter_data.input_tokens[
                     seq_idx][inter_data.suffix_computed_block_locs[1]:]
                 inter_data.input_positions_seg2[seq_idx] = inter_data.input_positions[
@@ -847,6 +888,8 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
             if inter_data.is_prompt:
                 for cur_input_tokens in inter_data.input_tokens_seg2:
                     input_tokens.extend(cur_input_tokens)
+                for cur_input_tokens in inter_data.input_tokens_seg3:
+                    input_tokens.extend(cur_input_tokens)
         # print("input_tokens", len(input_tokens), input_tokens)
 
         if not input_tokens:
@@ -877,6 +920,8 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
                     input_positions.extend(cur_input_positions)
                 if inter_data.is_prompt:
                     for cur_input_positions in inter_data.input_positions_seg2:
+                        input_positions.extend(cur_input_positions)
+                    for cur_input_positions in inter_data.input_positions_seg3:
                         input_positions.extend(cur_input_positions)
 
         seq_lens = []

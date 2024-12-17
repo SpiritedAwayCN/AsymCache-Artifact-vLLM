@@ -407,7 +407,7 @@ class Sequence:
         self._prompt: Optional[str] = None
         self._prompt_token_ids: Optional[List[int]] = None
         self.slo_urgent = slo_urgent
-        self.suffix_computed_block_locs : List[int] = [0, 0]
+        self.suffix_computed_block_locs : List[int] = [0, 0, 0, 0]
 
         # For decoder-only models, a Sequence is constructed
         # from an LLMInputs instance (the `inputs` arg.)
