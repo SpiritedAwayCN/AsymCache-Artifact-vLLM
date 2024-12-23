@@ -784,6 +784,7 @@ def unified_flash_attention(
             # normal attention
             # When block_tables are not filled, it means q and k are the
             # prompt, and they have the same length.
+            # print("normal attention", f"prefill_meta: {prefill_meta}", flush=True)
             prefill_output = _flash_attn_varlen_func(
                 q=query,
                 k=key,
@@ -812,7 +813,7 @@ def unified_flash_attention(
             if prefill_meta.seq_lens_firstseg is None:
                 max_seq_len = max(prefill_meta.seq_lens)
                 
-                # print("prefix-enabled", f"prefill_meta: {prefill_meta}", flush=True)
+                # print("prefix-enabled", f"prefill_meta: {prefill_meta}", f"decode: {attn_metadata.decode_metadata}", flush=True)
                 prefill_output = _flash_attn_varlen_func(  # noqa
                     q=query,
                     k=key_cache,

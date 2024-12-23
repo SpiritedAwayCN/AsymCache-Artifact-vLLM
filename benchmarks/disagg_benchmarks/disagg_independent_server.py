@@ -35,6 +35,9 @@ async def handle_request():
         # Get environment variables
         vllm_port_prefill = os.environ.get('VLLM_PREFILL_PORT', '8100')
         vllm_port_decode = os.environ.get('VLLM_DECODE_PORT', '8200')
+        
+        if "std_output_tokens" in prefill_request:
+            prefill_request['std_output_tokens'] = prefill_request['std_output_tokens'][:1]
 
         # Launch prefill and decode tasks
         prefill_task = asyncio.create_task(
