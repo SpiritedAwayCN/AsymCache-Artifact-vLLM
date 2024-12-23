@@ -1765,8 +1765,38 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         if self.need_send_kv(model_input, kv_caches):
             logger.debug(f"Sending kv")
             hashes = get_disagg_group().recv_hash()
+            
             # wait until hash received
             
+            if hashes[0] is None:
+                raise RuntimeError("hashes are None, this should never happen!")
+            # torch.distributed.barrier()
+            logger.debug("direct sending kv caches")
+            # TODO: Reduce the complexity of algo
+            # To store the seqid and blockids
+            seqid_blockids_map = {}
+            
+            last_seqid = None
+            for seqid_hash in reversed(hashes):
+                numpy_data = seqid_hash.numpy()
+                seqid = numpy_data[0]
+                hash = numpy_data[1]
+                if seqid == last_seqid:
+                    continue
+                # logger.debug(f"seqid: {seqid}, hash: {hash}")
+                block_ids = block_manager.get_hash_block_ids(hash, seqid)
+                # logger.debug(f"get block ids: {block_ids}")
+                
+                if block_ids:
+                    last_seqid = seqid
+                
+                # check if seq id already exist
+                if seqid in seqid_blockids_map:
+                    raise RuntimeError(f"seqid {seqid} already exist in seqid_blockids_map")
+                
+                seqid_blockids_map[seqid] = block_ids
+            
+            logger.debug(f"seqid_blockids_map: {seqid_blockids_map}")
             get_disagg_group().direct_send_kv_caches_and_hidden_states(
                 # model_executable is used to know which layer the current
                 # worker is working on, so that we can send KV for only those
