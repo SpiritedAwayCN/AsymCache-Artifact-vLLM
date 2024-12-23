@@ -784,6 +784,7 @@ def unified_flash_attention(
             # normal attention
             # When block_tables are not filled, it means q and k are the
             # prompt, and they have the same length.
+            # print("run prompt")
             prefill_output = _flash_attn_varlen_func(
                 q=query,
                 k=key,
@@ -863,6 +864,7 @@ def unified_flash_attention(
 
     if decode_meta := attn_metadata.decode_metadata:
         # Decoding run.
+        # print("run decode kernel")
         _, num_head, head_dim = decode_query.shape
         decode_query = decode_query.reshape(-1, decode_meta.decode_query_len,
                                             num_head, head_dim)

@@ -504,8 +504,7 @@ class KV_transfer_agent:
             hash_num += block_num
             for i in range(block_num):
                 block_token_ids = token_ids[:(i+1) * block_size]
-                tupled_token_ids = tuple(block_token_ids)
-                # logger.debug(f"RANK:{torch.distributed.get_rank()}:{block_token_ids}")
+                tupled_token_ids = (tuple(block_token_ids), None)
                 hash_block_token_ids = hash((tupled_token_ids,0))
                 # make hash as an tensor
                 seq_id2hash = torch.tensor([seq_id,hash_block_token_ids], dtype=torch.int64, device="cpu")

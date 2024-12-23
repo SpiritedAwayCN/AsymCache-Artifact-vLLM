@@ -9,10 +9,10 @@ benchmark() {
   model="/home/tzl/huggingface/modelzoo/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659"
   dataset_name="sonnet"
   dataset_path="../sonnet_4x.txt"
-  num_prompts=20
+  num_prompts=1
   qps=2
   prefix_len=50
-  input_len=400
+  input_len=1000
   output_len=100
   tag=$3
 

@@ -38,6 +38,7 @@ launch_disagg_prefill() {
       --disable-log-stats \
       --disable-log-requests \
       --disable-async-output-proc \
+      --enable-prefix-caching \
       --gpu-memory-utilization 0.8 &> PREFILL.txt &
   VLLM_PORT=12346 VLLM_DISTRIBUTED_KV_ROLE=consumer CUDA_VISIBLE_DEVICES=1 python3 \
     -m vllm.entrypoints.openai.api_server \
@@ -47,6 +48,7 @@ launch_disagg_prefill() {
     --disable-log-stats \
     --disable-log-requests \
     --disable-async-output-proc \
+    --enable-prefix-caching \
     --gpu-memory-utilization 0.8 &> DECODE.txt &
   wait_for_server 8100
   wait_for_server 8200

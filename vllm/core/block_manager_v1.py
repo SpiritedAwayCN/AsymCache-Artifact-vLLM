@@ -221,6 +221,7 @@ class UncachedBlockAllocator(BlockAllocatorBase):
         return block
 
     def free(self, block: PhysicalTokenBlock) -> None:
+        print("free blocks")
         if block.ref_count == 0:
             raise ValueError(f"Double free! {block} is already freed.")
         block.ref_count -= 1
