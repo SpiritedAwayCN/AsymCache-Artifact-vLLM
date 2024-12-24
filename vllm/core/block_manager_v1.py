@@ -302,6 +302,9 @@ class BlockSpaceManagerV1(BlockSpaceManager):
         
         self.test_ignore_cache_block_num: int = 0
         self.test_ignore_cache_block_start: int = 0
+
+        self.test_ignore_cache_block_num_2: int = 0
+        self.test_ignore_cache_block_start_2: int = 0
         
         # if enable_seq_refactor:
         #     logger.info("Sequence Refactor is enabled.")
@@ -369,7 +372,8 @@ class BlockSpaceManagerV1(BlockSpaceManager):
                 block = self.gpu_allocator.allocate(
                     seq.hash_of_block(logical_idx),
                     seq.num_hashed_tokens_of_block(logical_idx),
-                    0 < logical_idx - self.test_ignore_cache_block_start <= self.test_ignore_cache_block_num)
+                    0 < logical_idx - self.test_ignore_cache_block_start <= self.test_ignore_cache_block_num
+                    or 0 < logical_idx - self.test_ignore_cache_block_start_2 <= self.test_ignore_cache_block_num_2)
                 # if self.seq_refactor:
                 #     self.refseq_tracker.add(block.block_hash, seq)
             else:
@@ -385,12 +389,18 @@ class BlockSpaceManagerV1(BlockSpaceManager):
                     # multiple of 64
                     segment_status += 1
                     seq.suffix_computed_block_locs[0] = logical_idx
+                elif segment_status == 3:
+                    segment_status += 1
+                    seq.suffix_computed_block_locs[2] = logical_idx
             elif segment_status == 2:
                 segment_status = 3
                 seq.suffix_computed_block_locs[1] = logical_idx
             elif segment_status == 0:
                 segment_status = 1
                 fitst_compute_start = logical_idx
+            elif segment_status == 4:
+                segment_status = 5
+                seq.suffix_computed_block_locs[3] = logical_idx
             
             block_table.append(block)
 
@@ -400,9 +410,19 @@ class BlockSpaceManagerV1(BlockSpaceManager):
             real_total_count = block_table[seq.suffix_computed_block_locs[1]].total_count
             for block in block_table._blocks[seq.suffix_computed_block_locs[0]:seq.suffix_computed_block_locs[1]]:
                 block.total_count = real_total_count
+        
+        if segment_status == 4:
+            seq.suffix_computed_block_locs[3] = logical_idx
+        elif seq.suffix_computed_block_locs[2] > 0:
+            real_total_count = block_table[seq.suffix_computed_block_locs[3]].total_count
+            for block in block_table._blocks[seq.suffix_computed_block_locs[2]:seq.suffix_computed_block_locs[3]]:
+                block.total_count = real_total_count
+
             
         seq.suffix_computed_block_locs[0] *= self.block_size
         seq.suffix_computed_block_locs[1] *= self.block_size
+        seq.suffix_computed_block_locs[2] *= self.block_size
+        seq.suffix_computed_block_locs[3] *= self.block_size
         
         logger.info(f"seq: {seq}, "
                     f"suffix_computed_block_locs: {seq.suffix_computed_block_locs}, "

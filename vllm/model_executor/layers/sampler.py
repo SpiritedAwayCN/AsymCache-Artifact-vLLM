@@ -285,7 +285,8 @@ class Sampler(nn.Module):
             if sampling_params.std_output_tokens:
                 if sampling_params.std_output_tokens_next_idx == len(sampling_params.std_output_tokens):
                     # sample <eos> if std_output ends
-                    maybe_deferred_sample_results[i] = ([128009],) + maybe_deferred_sample_results[i][1:]
+                    # ([128001],)
+                    maybe_deferred_sample_results[i] = ([sampling_params.eos_token_id],) + maybe_deferred_sample_results[i][1:]
                 else:
                     maybe_deferred_sample_results[i] = \
                         ([sampling_params.std_output_tokens[sampling_params.std_output_tokens_next_idx]],) + \

@@ -155,8 +155,11 @@ class FlashAttentionMetadata(AttentionMetadata):
     # MODIFIED for second segment cache
     seq_lens_firstseg: Optional[List[int]] = None
     seq_lens_firstseg_tensor: Optional[torch.Tensor] = None
+    seq_lens_secondseg: Optional[List[int]] = None
+    seq_lens_secondseg_tensor: Optional[torch.Tensor] = None
     # context_lens_tensor2: Optional[torch.Tensor]
     seq_used_k: Optional[torch.Tensor] = None
+    seq_used_k_2: Optional[torch.Tensor] = None
     # seq_start_loc2: Optional[torch.Tensor] = None
     # num_prefill_tokens_firstseg: int = 0
     # max_query_len2: int = 0
@@ -197,8 +200,11 @@ class FlashAttentionMetadata(AttentionMetadata):
             use_cuda_graph=False,
             seq_lens_firstseg=self.seq_lens_firstseg,
             seq_lens_firstseg_tensor=self.seq_lens_firstseg_tensor,
+            seq_lens_secondseg=self.seq_lens_secondseg,
+            seq_lens_secondseg_tensor=self.seq_lens_secondseg_tensor,
             # context_lens_tensor2=None,
             seq_used_k=self.seq_used_k,
+            seq_used_k_2=self.seq_used_k_2,
             # seq_start_loc2=self.seq_start_loc2,
             # num_prefill_tokens_firstseg=self.num_prefill_tokens_firstseg,
             # max_query_len2=self.max_query_len2,
@@ -233,8 +239,11 @@ class FlashAttentionMetadata(AttentionMetadata):
             use_cuda_graph=self.use_cuda_graph,
             seq_lens_firstseg=None,
             seq_lens_firstseg_tensor=None,
+            seq_lens_secondseg=None,
+            seq_lens_secondseg_tensor=None,
             # context_lens_tensor2=None,
             seq_used_k=None,
+            seq_used_k_2=None,
             # seq_start_loc2=None,
             # num_prefill_tokens_firstseg=0,
             # max_query_len2=0,
@@ -348,18 +357,19 @@ class FlashAttentionMetadataBuilder(
         block_tables = inter_data.block_tables
 
         for (seq_id, token_len, seq_len, curr_seq_len, query_len, context_len,
-             curr_sliding_window_block, token_len_seg2) in itertools.zip_longest(
+             curr_sliding_window_block, token_len_seg2, token_len_seg3) in itertools.zip_longest(
                  inter_data.seq_ids, [len(t) for t in inter_data.input_tokens],
                  inter_data.orig_seq_lens, inter_data.seq_lens,
                  inter_data.query_lens, inter_data.context_lens,
                  inter_data.curr_sliding_window_blocks,
                  [len(t) for t in inter_data.input_tokens_seg2] if inter_data.input_tokens_seg2 is not None else [],
+                 [len(t) for t in inter_data.input_tokens_seg3] if inter_data.input_tokens_seg3 is not None else [],
                  fillvalue=0):
             self.context_lens.append(context_len)
 
             if is_prompt:
                 self.num_prefills += 1
-                self.num_prefill_tokens += token_len + token_len_seg2
+                self.num_prefill_tokens += token_len + token_len_seg2 + token_len_seg3
                 self.prefill_seq_lens.append(seq_len)
                 # logger.info(
                 #     f'seq_id: {seq_id}, '
@@ -417,12 +427,24 @@ class FlashAttentionMetadataBuilder(
             else:
                 assert inter_data.suffix_computed_block_locs[0] > 0, f"suffix_computed_block_locs: {inter_data.suffix_computed_block_locs}"
                 # assert is_prompt == True
-                compute_slot_mapping(is_profile_run, self.slot_mapping, seq_id,
-                                    inter_data.suffix_computed_block_locs[0], context_len, start_idx,
-                                    self.block_size, inter_data.block_tables)
-                compute_slot_mapping(is_profile_run, self.slot_mapping, seq_id,
-                                    seq_len, inter_data.suffix_computed_block_locs[1], start_idx,
-                                    self.block_size, inter_data.block_tables)
+                if inter_data.suffix_computed_block_locs[3] <= 0:
+                    compute_slot_mapping(is_profile_run, self.slot_mapping, seq_id,
+                                        inter_data.suffix_computed_block_locs[0], context_len, start_idx,
+                                        self.block_size, inter_data.block_tables)
+                    compute_slot_mapping(is_profile_run, self.slot_mapping, seq_id,
+                                        seq_len, inter_data.suffix_computed_block_locs[1], start_idx,
+                                        self.block_size, inter_data.block_tables)
+                else:
+                    compute_slot_mapping(is_profile_run, self.slot_mapping, seq_id,
+                                        inter_data.suffix_computed_block_locs[0], context_len, start_idx,
+                                        self.block_size, inter_data.block_tables)
+                    compute_slot_mapping(is_profile_run, self.slot_mapping, seq_id,
+                                        inter_data.suffix_computed_block_locs[2],
+                                        inter_data.suffix_computed_block_locs[1], start_idx,
+                                        self.block_size, inter_data.block_tables)
+                    compute_slot_mapping(is_profile_run, self.slot_mapping, seq_id,
+                                        seq_len, inter_data.suffix_computed_block_locs[3], start_idx,
+                                        self.block_size, inter_data.block_tables)
             
 
     def _get_graph_runner_block_tables(
@@ -466,7 +488,9 @@ class FlashAttentionMetadataBuilder(
         ])
         
         seq_used_k: List[int] = []
+        seq_used_k_2: List[int] = []
         query_lens_2: List[int] = []
+        query_lens_3: List[int] = []
         cache_2seg: bool = False
         
         for inter_data in self.input_builder.inter_data_list:
@@ -475,7 +499,13 @@ class FlashAttentionMetadataBuilder(
                                 prefix_cache_hit)
             if inter_data.suffix_computed_block_locs is not None:
                 seq_used_k.append(inter_data.suffix_computed_block_locs[0])
-                query_lens_2.append(len(inter_data.input_positions[0]))
+                query_lens_2.append(len(inter_data.input_positions[0])) # first seg
+                if inter_data.suffix_computed_block_locs[3] > 0:
+                    query_lens_3.append(len(inter_data.input_positions_seg2[0])) # second seg
+                    seq_used_k_2.append(inter_data.suffix_computed_block_locs[2])
+                else:
+                    query_lens_3.append(0)
+                    seq_used_k_2.append(0)
                 cache_2seg = True if inter_data.suffix_computed_block_locs[1] > 0 else cache_2seg
                 # print(f"suffix_computed_block_locs: {inter_data.suffix_computed_block_locs}, val: {val}", flush=True)
 
@@ -541,8 +571,17 @@ class FlashAttentionMetadataBuilder(
         if cache_2seg:
             seq_lens_firstseg_tensor = async_tensor_h2d(query_lens_2, torch.long, device,
                                                self.runner.pin_memory)
+            seq_lens_secondseg_tensor = async_tensor_h2d(query_lens_3, torch.long, device,
+                                                self.runner.pin_memory)
             seq_used_k_tensor = async_tensor_h2d(seq_used_k, torch.int, device,
                                                 self.runner.pin_memory)
+            seq_used_k_2_tensor = async_tensor_h2d(seq_used_k_2, torch.int, device,
+                                                self.runner.pin_memory)
+            # with open("/home/infer/chenyilei/usedk.txt", "a") as f:
+            #     f.write(f"seq_lens_firstseg: {query_lens_2}\n")
+            #     f.write(f"seq_lens_secondseg: {query_lens_3}\n")
+            #     f.write(f"seq_used_k: {seq_used_k}\n")
+            #     f.write(f"seq_used_k_2: {seq_used_k_2}\n\n")
             # print('new meta builder', flush=True)
             return FlashAttentionMetadata(
                 num_prefills=self.num_prefills,
@@ -562,7 +601,10 @@ class FlashAttentionMetadataBuilder(
                 use_cuda_graph=use_captured_graph,
                 seq_lens_firstseg=query_lens_2,
                 seq_lens_firstseg_tensor=seq_lens_firstseg_tensor,
+                seq_lens_secondseg=query_lens_3,
+                seq_lens_secondseg_tensor=seq_lens_secondseg_tensor,
                 seq_used_k=seq_used_k_tensor,
+                seq_used_k_2=seq_used_k_2_tensor,
             )
 
         return FlashAttentionMetadata(
@@ -851,7 +893,9 @@ def unified_flash_attention(
                     block_table=prefill_meta.block_tables,
                     softcap=logits_soft_cap,
                     seqused_k=prefill_meta.seq_used_k,
+                    seqused_k_2=prefill_meta.seq_used_k_2,
                     seqlens_q_firstseg=prefill_meta.seq_lens_firstseg_tensor,
+                    seqlens_q_secondseg=prefill_meta.seq_lens_secondseg_tensor,
                     force_kBlockM=force_kBlockM,
                 )
                     

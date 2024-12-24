@@ -1271,7 +1271,7 @@ class Scheduler:
             # We should send the metadata to workers when the first prefill
             # is sent. Subsequent requests could be chunked prefill or decode.
             is_first_prefill = False
-            suffix_computed_block_locs = [0, 0]
+            suffix_computed_block_locs = [0, 0, 0, 0]
             if is_prompt:
                 seqs = seq_group.get_seqs()
                 # Prefill has only 1 sequence.

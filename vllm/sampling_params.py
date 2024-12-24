@@ -214,6 +214,7 @@ class SamplingParams(
     # standard output tokens_id
     std_output_tokens: Optional[List[int]] = None
     std_output_tokens_next_idx: int = 0
+    std_output_str: Optional[str] = None
 
     @staticmethod
     def from_optional(
@@ -246,6 +247,7 @@ class SamplingParams(
         logit_bias: Optional[Union[Dict[int, float], Dict[str, float]]] = None,
         allowed_token_ids: Optional[List[int]] = None,
         std_output_tokens: Optional[List[int]] = None,
+        std_output_str: Optional[str] = None,
     ) -> "SamplingParams":
         if logit_bias is not None:
             logit_bias = {
@@ -285,6 +287,7 @@ class SamplingParams(
             logit_bias=logit_bias,
             allowed_token_ids=allowed_token_ids,
             std_output_tokens=std_output_tokens,
+            std_output_str=std_output_str,
         )
 
     def __post_init__(self) -> None:
@@ -410,6 +413,7 @@ class SamplingParams(
             model_eos_token_id: Optional[int] = None) -> None:
         """Update if there are non-default values from generation_config"""
 
+        self.eos_token_id = model_eos_token_id
         if model_eos_token_id is not None:
             # Add the eos token id into the sampling_params to support
             # min_tokens processing.
@@ -481,7 +485,8 @@ class SamplingParams(
             f"{self.spaces_between_special_tokens}, "
             f"truncate_prompt_tokens={self.truncate_prompt_tokens}), "
             f"guided_decoding={self.guided_decoding}, "
-            f"std_output_tokens={self.std_output_tokens}")
+            f"std_output_tokens={self.std_output_tokens}, "
+            f"std_output_str={self.std_output_str}")
 
 
 class BeamSearchParams(
