@@ -13,7 +13,7 @@ from vllm.entrypoints.chat_utils import ChatCompletionMessageParam
 from vllm.pooling_params import PoolingParams
 from vllm.sampling_params import (BeamSearchParams, GuidedDecodingParams,
                                   RequestOutputKind, SamplingParams)
-from vllm.sequence import Logprob
+from vllm.sequence import Logprob, RequestMetrics
 from vllm.utils import random_uuid
 
 # torch is mocked during docs generation,
@@ -747,6 +747,7 @@ class CompletionResponseChoice(OpenAIBaseModel):
             "including encountering the EOS token"),
     )
     prompt_logprobs: Optional[List[Optional[Dict[int, Logprob]]]] = None
+    metrics: Optional[RequestMetrics] = None
 
 
 class CompletionResponse(OpenAIBaseModel):
