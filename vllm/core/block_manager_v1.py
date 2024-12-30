@@ -10,13 +10,16 @@ from typing import Set, Tuple, List
 from vllm.block import BlockTable, PhysicalTokenBlock
 from vllm.core.block.common import CacheMetricData
 from vllm.core.block.utils import check_no_caching_or_swa_for_blockmgr_encdec
+from vllm.core.buffer_before_evictor import BufferedEvictor
 from vllm.core.evictor_v1 import EvictionPolicy, Evictor, make_evictor
 from vllm.core.interfaces import AllocStatus, BlockSpaceManager
 from vllm.logger import init_logger
 from vllm.sequence import Sequence, SequenceGroup, SequenceStatus
 from vllm.utils import Device
 # from vllm.core.utils import RefSeqTracker
-
+import vllm.envs as envs
+IS_KV_PRODUCER: bool = (envs.VLLM_DISTRIBUTED_KV_ROLE in ["producer", "both"])
+IS_KV_CONSUMER: bool = (envs.VLLM_DISTRIBUTED_KV_ROLE in ["consumer", "both"])
 logger = init_logger(__name__)
 
 _tmp_x, _tmp_y = 0, 0
@@ -36,7 +39,19 @@ class BlockAllocatorBase(ABC):
                  num_blocks: int,
                  eviction_policy: EvictionPolicy = EvictionPolicy.LRU):
         pass
-
+    
+    @abstractmethod
+    def get_new_block_hash(self) -> List[int]:
+        pass
+    
+    @abstractmethod
+    def clear_new_block_hash_list(self) -> None:
+        pass
+    
+    @abstractmethod
+    def get_block_ids_from_hash(self, block_hash: int) -> int:
+        pass
+    
     @abstractmethod
     def allocate(self,
                  block_hash: Optional[int] = None,
@@ -67,6 +82,10 @@ class BlockAllocatorBase(ABC):
     def get_prefix_cache_hit_rate(self) -> float:
         """Prefix cache hit rate. -1 means not supported or disabled."""
         pass
+    
+    @abstractmethod
+    def flush_evictor_buffer(self, hash_list: List[int]) -> None:
+        pass
 
 
 class CachedBlockAllocator(BlockAllocatorBase):
@@ -88,13 +107,79 @@ class CachedBlockAllocator(BlockAllocatorBase):
 
         self.current_num_blocks = 0
         self.cached_blocks: Dict[int, PhysicalTokenBlock] = {}
+        
 
         self.evictor: Evictor = make_evictor(eviction_policy)
-
+        self.buffer_evictor : BufferedEvictor = BufferedEvictor(self.evictor)
+        
         self.default_hash_ctr = count()
 
         self.cache_metric_data = CacheMetricData()
+        
+        self.new_alloc_block_hash : List[int] = []
+        
+    def get_new_block_hash(self) -> List[int]:
+        return self.new_alloc_block_hash
+    
+    def clear_new_block_hash_list(self) -> None:
+        self.new_alloc_block_hash.clear()
+    
+    def change_block_status(self, block_hash: int, status: bool) -> None:
+        # function is used to change the matched blocks
+        assert IS_KV_CONSUMER
+        block = self.cached_blocks.get(block_hash, None)
+        assert block is not None
+        block.computed = status
+    
+    def change_block_used_status(self, block_hash_list: List[int], status: bool) -> None:
+        assert IS_KV_PRODUCER
+        for block_hash in block_hash_list:
+            block = self.cached_blocks.get(block_hash, None)
+            if block is not None:
+                # logger.debug(f"change block {block.block_hash} used status to {status}")
+                block.used_by_decode = status
 
+    def get_block_ids_from_hash(self, block_hash: int) -> int:
+        # search cache
+        assert IS_KV_PRODUCER
+        block = self.cached_blocks.get(block_hash)
+        # logger.debug(f"get block ids from hash: {block_hash}")
+        if block is not None:
+            block.used_by_decode = True
+            # logger.debug(f"found in cache: {block.block_number, block.block_hash, block.computed}")
+        # search buffer
+        if block is None and IS_KV_PRODUCER:
+            # logger.debug(f"try to found in buffer: {block_hash}")
+            block = self.buffer_evictor.pop(block_hash)
+            # logger.debug(f"poped")
+            if block is not None:
+                # logger.debug(f"found in buffer: {block.block_number, block.block_hash, block.computed}")
+                block.used_by_decode = True
+        if block is not None:
+            # logger.debug(f"return block number: {block.block_number}")
+            assert block.computed
+            assert block.used_by_decode
+            return block.block_number
+        # logger.debug(f"not found in cache or buffer: {block_hash}")
+        return None
+    
+    def has_full_block(self, block_hash_list: List[int]) -> bool:
+        assert IS_KV_PRODUCER
+        return all(
+            (block_hash in self.cached_blocks and self.cached_blocks[block_hash].computed) or 
+            self.buffer_evictor.check_if_in_buffer(block_hash) 
+            for block_hash in block_hash_list
+        )
+        
+    def get_block_ids_from_cache(self, block_hash: int) -> int:
+        block = self.cached_blocks.get(block_hash)
+        if block is not None:
+            return block.block_number
+        elif IS_KV_CONSUMER:
+            raise ValueError(f"Block with hash {block_hash} not in cache, this should never happen")
+        else:
+            raise ValueError(f"We do not expect this error to be triggered in our mind")
+    
     def allocate_block(self, block_hash: int,
                        num_hashed_tokens: int) -> PhysicalTokenBlock:
         if self.current_num_blocks == self.num_blocks:
@@ -115,8 +200,10 @@ class CachedBlockAllocator(BlockAllocatorBase):
                  num_hashed_tokens: int = 0,
                  force_ignore_cache: bool = False) -> PhysicalTokenBlock:
         global _tmp_x, _tmp_y
+        fake_hash : bool = False
         if block_hash is None:
             block_hash = next(self.default_hash_ctr)
+            fake_hash = True
 
         if block_hash in self.evictor:
             assert block_hash not in self.cached_blocks
@@ -136,14 +223,31 @@ class CachedBlockAllocator(BlockAllocatorBase):
                         break
                 self.evictor.add(block)
             else:
+                # logger.debug(f"found in evictor: {block_hash}")
                 self.cached_blocks[block_hash] = block
 
         if block_hash in self.cached_blocks:
+            # logger.debug(f"found in cache: {block_hash}")
             self.cache_metric_data.query(hit=True)
+        
+        # PREFILL ONLY!!!
+        elif IS_KV_PRODUCER and not fake_hash and self.buffer_evictor.check_if_in_buffer(block_hash):
+            # logger.debug(f"found in buffer: {block_hash}")
+            block = self.buffer_evictor.get(block_hash)
+            if block:
+                self.cached_blocks[block_hash] = block
         else:
             self.cache_metric_data.query(hit=False)
             self.cached_blocks[block_hash] = self.allocate_block(
                 block_hash, num_hashed_tokens)
+            # transmit the hashes to Prefill to query the cache
+            # DECODE ONLY!!!
+            if IS_KV_CONSUMER and not fake_hash :
+                assert block_hash not in self.new_alloc_block_hash
+                # logger.debug(f"new block hash: {block_hash}")
+                self.new_alloc_block_hash.append(block_hash)
+        # if self.cached_blocks:
+        #     print(f"Cached blocks: {self.cached_blocks.keys()}")
         block = self.cached_blocks[block_hash]
         assert block.block_hash == block_hash
         block.ref_count += 1
@@ -155,8 +259,16 @@ class CachedBlockAllocator(BlockAllocatorBase):
         block.ref_count -= 1
         # logger.info(f"Block {block.block_number} is being freed (refcnt={block.ref_count})")
         if block.ref_count == 0:
-            assert block.block_hash not in self.evictor
-            self.evictor.add(block)
+            if IS_KV_PRODUCER and not block.used_by_decode:
+                # Before free, Cache has got all the block in buffer that is needed 
+                assert block.block_hash not in self.buffer_evictor.buffer
+                # assert block.computed == True
+                # logger.debug(f"add block {block.block_hash} to buffer")
+                self.buffer_evictor.add(block)
+            else:
+                assert block.block_hash not in self.evictor
+                # logger.debug(f"add block {block.block_hash} to evictor")
+                self.evictor.add(block)
 
             # Remove the block from the cached_blocks
             del self.cached_blocks[block.block_hash]
@@ -182,7 +294,12 @@ class CachedBlockAllocator(BlockAllocatorBase):
     def get_prefix_cache_hit_rate(self) -> float:
         return self.cache_metric_data.get_hit_rate()
 
+    def flush_evictor_buffer(self, hash_list: List[int]) -> None:
+        self.buffer_evictor.flush(hash_list)
 
+    def show_evictor_buffer(self) -> None:
+        self.buffer_evictor.show()
+        
 class UncachedBlockAllocator(BlockAllocatorBase):
     """Manages free physical token blocks for a device.
 
@@ -210,7 +327,21 @@ class UncachedBlockAllocator(BlockAllocatorBase):
                                        block_hash=-1,
                                        num_hashed_tokens=0)
             self.free_blocks.append(block)
-
+            
+        self.new_alloc_block_hash : List[int] = []
+        
+    def get_new_block_hash(self) -> List[int]:
+        return self.new_alloc_block_hash
+    
+    def clear_new_block_hash_list(self) -> None:
+        self.new_alloc_block_hash.clear
+        
+    def get_block_ids_from_hash(self, block_hash: int) -> int:
+        block = self.cached_blocks.get(block_hash)
+        if block is not None:
+            return block.block_number
+        return None
+    
     def allocate(self,
                  block_hash: Optional[int] = None,
                  num_hashed_tokens: int = 0) -> PhysicalTokenBlock:
@@ -245,6 +376,8 @@ class UncachedBlockAllocator(BlockAllocatorBase):
     def get_prefix_cache_hit_rate(self) -> float:
         return -1
 
+    def flush_evictor_buffer(self, hash_list: List[int]) -> None:
+        raise RuntimeError("This function should not be called for uncached block allocator.")
 
 class BlockSpaceManagerV1(BlockSpaceManager):
     """Manages the mapping between logical and physical token blocks."""
@@ -286,7 +419,7 @@ class BlockSpaceManagerV1(BlockSpaceManager):
             self.gpu_allocator: BlockAllocatorBase = CachedBlockAllocator(
                 Device.GPU, block_size, num_gpu_blocks, evictor_policy)
             self.cpu_allocator: BlockAllocatorBase = CachedBlockAllocator(
-                Device.CPU, block_size, num_cpu_blocks, evictor_policy)
+                Device.CPU, block_size, num_cpu_blocks, evictor_policy)   
         else:
             self.gpu_allocator = UncachedBlockAllocator(
                 Device.GPU, block_size, num_gpu_blocks)
@@ -307,14 +440,20 @@ class BlockSpaceManagerV1(BlockSpaceManager):
         #     logger.info("Sequence Refactor is enabled.")
         #     self.seq_refactor = True
         #     self.refseq_tracker = RefSeqTracker()
-
-    def get_hash_block_ids(self, block_hash: int, seq_id: int)-> List[int]:
-        block_table: BlockTable = self.block_tables[seq_id]
-        return block_table.get_blockids_from_hash(block_hash)
+    def get_hash_block_ids(self, block_hash: int)-> List[int]:
+        assert IS_KV_PRODUCER
+        return self.gpu_allocator.get_block_ids_from_hash(block_hash)
     
     def _get_seq_num_required_blocks(self, seq: Optional[Sequence]) -> int:
         return 0 if seq is None else seq.n_blocks
 
+    def get_new_block_hash(self) -> List[int]:
+        import copy
+        hash_list = copy.deepcopy(self.gpu_allocator.get_new_block_hash())
+        # logger.info(f"new block hash: {hash_list}")
+        self.gpu_allocator.clear_new_block_hash_list()  
+        return hash_list
+        
     def can_allocate(self,
                      seq_group: SequenceGroup,
                      num_lookahead_slots: int = 0) -> AllocStatus:

@@ -218,6 +218,8 @@ class LRU2Evictor(Evictor):
         self.free_table.pop(evicted_block.block_hash)
 
         evicted_block.computed = False
+        evicted_block.used_by_decode = False
+        
         # evicted_block.ref_seqs.clear()
         return evicted_block
 

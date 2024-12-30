@@ -345,7 +345,7 @@ class LLMEngine:
             prompt_adapter_config=prompt_adapter_config,
             observability_config=self.observability_config,
         )
-
+        
         if not self.model_config.embedding_mode:
             self._initialize_kv_caches()
 
@@ -428,6 +428,7 @@ class LLMEngine:
                 if model_config.use_async_output_proc else None)
             for v_id in range(parallel_config.pipeline_parallel_size)
         ]
+
 
         # Metric Logging.
         if self.log_stats:

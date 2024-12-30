@@ -304,27 +304,27 @@ class TorchDistributedPipe(KVPipeBase):
         """
         if not tensors:
             return
-        if self.transport_thread is None:
-            self.transport_thread = ThreadPoolExecutor(max_workers=1)
+        # if self.transport_thread is None:
+        #     self.transport_thread = ThreadPoolExecutor(max_workers=8)
             
-        def async_send(tensors):
+        # def async_send(tensors):
+        try:
+            # Send tensors one by one
+            logger.debug(f"RANK:{torch.distributed.get_rank()}  Sending {len(tensors)} tensor")
+            for tensor in tensors:
+                if tensor is None:
+                    tensor = self.none_tensor
+                self._send_impl(tensor)  # Send each tensor using the _send_impl method
             
-            try:
-                # Send tensors one by one
-                logger.debug(f"RANK:{torch.distributed.get_rank()}  Sending {len(tensors)} tensor")
-                for tensor in tensors:
-                    if tensor is None:
-                        tensor = self.none_tensor
-                    self._send_impl(tensor)  # Send each tensor using the _send_impl method
-                
-                logger.debug(f"RANK:{torch.distributed.get_rank()} All tensors sent")
+            logger.debug(f"RANK:{torch.distributed.get_rank()} All tensors sent")
 
-            except Exception as e:
-                logger.error("Exception in send_tensor_list: %s", e)
-                import traceback
-                traceback.print_exc()
+        except Exception as e:
+            logger.error("Exception in send_tensor_list: %s", e)
+            import traceback
+            traceback.print_exc()
                 
-        self.transport_thread.submit(async_send, tensors)
+        # future = self.transport_thread.submit(async_send, tensors)
+        # future.result() 
         
     def receive_tensor_list(self, num_tensors: Optional[int] = 5) -> List[Optional[torch.Tensor]]:
         """
@@ -350,10 +350,11 @@ class TorchDistributedPipe(KVPipeBase):
                     logger.debug("Received None tensor")
                     received_tensors.append(None)
                 else:
-                    # logger.debug("Received tensor with shape %s", tensor.shape)
+                    # logger.debug(f"Receive tensor {tensor}")
                     received_tensors.append(tensor)
 
             # torch.distributed.barrier()
+            # logger.debug(f"All tensors received:{received_tensors}")
             logger.debug("All tensors received")
             return received_tensors
         except Exception as e:

@@ -65,6 +65,7 @@ main() {
   export VLLM_HOST_IP=$(hostname -I | awk '{print $1}')
   export VLLM_ALLOW_DEPRECATED_BLOCK_MANAGER_V1=1 
   # export CUDA_LAUNCH_BLOCKING=1
+  # export CUDA_LAUNCH_BLOCKING=1
   launch_disagg_prefill
 }
 
