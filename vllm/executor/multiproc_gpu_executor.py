@@ -19,7 +19,9 @@ from vllm.utils import (_run_task_with_lock, cuda_device_count_stateless,
                         cuda_is_initialized, get_distributed_init_method,
                         get_open_port, get_vllm_instance_id, make_async,
                         update_environment_variables)
-
+from vllm.core.block_manager_v1 import BlockSpaceManagerV1
+from vllm.core.block_manager_v2 import BlockSpaceManagerV2
+from typing import Union
 logger = init_logger(__name__)
 
 
@@ -147,14 +149,14 @@ class MultiprocessingGPUExecutor(DistributedGPUExecutor):
             worker_monitor.close()
 
     def _driver_execute_model(
-        self, execute_model_req: Optional[ExecuteModelRequest]
+        self, execute_model_req: Optional[ExecuteModelRequest], block_manager: Optional[Union[BlockSpaceManagerV1, BlockSpaceManagerV2]] = None
     ) -> Optional[List[SamplerOutput]]:
         """Run execute_model in the driver worker.
 
         Passing None will cause the driver to stop the model execution
         loop running in each of the remote workers.
         """
-        return self.driver_worker.execute_model(execute_model_req)
+        return self.driver_worker.execute_model(execute_model_req, block_manager)
 
     def _run_workers(
         self,

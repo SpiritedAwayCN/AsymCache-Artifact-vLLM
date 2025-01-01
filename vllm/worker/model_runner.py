@@ -1753,14 +1753,14 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         # bypass_model_exec = False
         if self.need_recv_kv(model_input, kv_caches):
             logger.debug("receiving kv")
-            query_hash_list = block_manager.get_new_block_hash()
+            query_hash_list = self.block_manager.get_new_block_hash()
             logger.debug(f"hash_list: {query_hash_list}")
             # get_scheduled_seqids(model_input)
             get_disagg_group().send_hash(query_hash_list, model_input, block_manager.block_size)
             get_disagg_group().direct_recv_kv_caches(
                 model_executable,
                 kv_caches,
-                block_manager,
+                self.block_manager,
                 )
 
         multi_modal_kwargs = model_input.multi_modal_kwargs or {}
@@ -1893,7 +1893,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         is_prefill_run = prefill_meta is not None
 
         return dist_kv.IS_KV_CONSUMER and (
-            not is_profile_run) and is_prefill_run
+            not is_profile_run) and is_prefill_run and self.block_manager is not None
 
     def need_send_kv(self, model_input, kv_caches) -> bool:
         """Check if we need to send kv-cache to the other worker.

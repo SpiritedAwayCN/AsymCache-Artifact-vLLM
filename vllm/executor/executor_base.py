@@ -81,7 +81,7 @@ class ExecutorBase(ABC):
         """Executes at least one model step on the given sequences."""
         raise NotImplementedError
 
-    def stop_remote_worker_execution_loop(self) -> None:
+    def stop_remote_worker_execution_loop(self, block_manager: Union[BlockSpaceManagerV1, BlockSpaceManagerV2] = None) -> None:
         """Releases parallel workers from model loop."""
         return
 

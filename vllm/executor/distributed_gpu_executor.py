@@ -8,7 +8,8 @@ from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
 from vllm.model_executor.layers.sampler import SamplerOutput
 from vllm.sequence import ExecuteModelRequest
-
+from vllm.core.block_manager_v1 import BlockSpaceManagerV1
+from vllm.core.block_manager_v2 import BlockSpaceManagerV2
 logger = init_logger(__name__)
 
 
@@ -71,6 +72,7 @@ class DistributedGPUExecutor(GPUExecutor):
     def execute_model(
         self,
         execute_model_req: ExecuteModelRequest,
+        block_manager: Optional[Union[BlockSpaceManagerV1, BlockSpaceManagerV2]] = None,
     ) -> List[SamplerOutput]:
         if self.parallel_worker_tasks is None:
             self.parallel_worker_tasks = self._run_workers(
@@ -79,7 +81,7 @@ class DistributedGPUExecutor(GPUExecutor):
                 **self.extra_execute_model_run_workers_kwargs)
 
         # Only the driver worker returns the sampling results.
-        driver_outputs = self._driver_execute_model(execute_model_req)
+        driver_outputs = self._driver_execute_model(execute_model_req, block_manager)
         assert driver_outputs is not None
         return driver_outputs
 
@@ -171,14 +173,15 @@ class DistributedGPUExecutorAsync(DistributedGPUExecutor, ExecutorAsyncBase):
 
     async def execute_model_async(
             self,
-            execute_model_req: ExecuteModelRequest) -> List[SamplerOutput]:
+            execute_model_req: ExecuteModelRequest,
+            block_manager: Optional[Union[BlockSpaceManagerV1, BlockSpaceManagerV2]] = None) -> List[SamplerOutput]:
         if self.parallel_worker_tasks is None:
             # Start model execution loop running in the parallel workers
             self.parallel_worker_tasks = asyncio.create_task(
                 self._start_worker_execution_loop())
 
         # Only the driver worker returns the sampling results.
-        return await self._driver_execute_model_async(execute_model_req)
+        return await self._driver_execute_model_async(execute_model_req, block_manager)
 
     async def stop_remote_worker_execution_loop_async(self) -> None:
         if self.parallel_worker_tasks is None:
@@ -195,6 +198,7 @@ class DistributedGPUExecutorAsync(DistributedGPUExecutor, ExecutorAsyncBase):
     async def _driver_execute_model_async(
         self,
         execute_model_req: Optional[ExecuteModelRequest] = None,
+        block_manager: Optional[Union[BlockSpaceManagerV1, BlockSpaceManagerV2]] = None,
     ) -> List[SamplerOutput]:
         """Execute the model asynchronously in the driver worker.
 
