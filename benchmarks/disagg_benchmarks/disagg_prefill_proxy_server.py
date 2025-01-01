@@ -34,6 +34,8 @@ async def handle_request():
         prefill_request = original_request_data.copy()
         # change max_tokens = 1 to let it only do prefill
         prefill_request['max_tokens'] = 1
+        if "std_output_tokens" in prefill_request:
+            prefill_request['std_output_tokens'] = prefill_request['std_output_tokens'][:1]
 
         # finish prefill
         # Get environment variable VLLM_PORT
@@ -62,4 +64,5 @@ async def handle_request():
 
 
 if __name__ == '__main__':
-    app.run(port=8000)
+    print("Starting disagg prefill proxy server...", flush=True)
+    app.run(host="0.0.0.0", port=8000)

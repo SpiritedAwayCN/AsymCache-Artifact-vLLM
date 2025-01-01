@@ -825,6 +825,9 @@ class LLMEngine:
         processed_inputs["mm_processor_kwargs"] = preprocessed_inputs.get(
             "mm_processor_kwargs")
 
+        if isinstance(params, SamplingParams) and params.std_output_str is not None:
+            params.std_output_tokens = self.input_preprocessor.get_tokenizer_group().encode(params.std_output_str)
+            params.std_output_tokens_idx = 0
         self._add_processed_request(
             request_id=request_id,
             processed_inputs=processed_inputs,

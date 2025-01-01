@@ -1,8 +1,8 @@
 import enum
 from abc import ABC, abstractmethod
-from typing import OrderedDict
+from typing import OrderedDict, Dict
 
-from vllm.block import PhysicalTokenBlock
+from vllm.block import PhysicalTokenBlock, BASE_FREQ
 from vllm.logger import init_logger
 
 logger = init_logger(__name__)
@@ -17,6 +17,8 @@ class EvictionPolicy(enum.Enum):
     LRU = enum.auto()
     LRU2 = enum.auto()
     LRU3 = enum.auto()
+    MWF = enum.auto() # Minimum Weight First，MWF
+    LFU = enum.auto()
 
 
 class Evictor(ABC):
@@ -238,13 +240,109 @@ class LRU2Evictor(Evictor):
     def num_blocks(self) -> int:
         return len(self.free_table)
 
+class LFUEvictor(Evictor):
+    
+    def __init__(self, base):
+        logger.info(f"{self.__class__.__name__} is used, base is {base}.")
+        # block_hash ---> (block, weight)
+        self.free_table: Dict[int, PhysicalTokenBlock] = dict()
 
-def make_evictor(eviction_policy: EvictionPolicy) -> Evictor:
+        import sys
+        import os
+        module_directory = os.environ.get("CSET_DIR", None)
+        if module_directory is None:
+            logger.error("CSET_DIR environment variable not set")
+        sys.path.append(module_directory)
+        from c_set import c_set_lfu
+        self.heap = c_set_lfu(base)
+
+    def __contains__(self, block_hash: int) -> bool:
+        return block_hash in self.free_table
+
+    def evict(self) -> PhysicalTokenBlock:
+        if len(self.free_table) == 0:
+            raise ValueError("No usable cache memory left")
+
+        # logger.info(f"evicting, heap size = {self.heap.size()}")
+        evicted_hash = self.heap.pop_first()
+        evicted_block = self.free_table.pop(evicted_hash)
+        evicted_block.computed = False
+        evicted_block.total_count = 0
+        return evicted_block
+
+    def add(self, block: PhysicalTokenBlock):
+        self.free_table[block.block_hash] = block
+        self.heap.insert(block.total_count, block.last_accessed, block.block_hash, block.num_hashed_tokens)
+
+    def remove(self, block_hash: int) -> PhysicalTokenBlock:
+        if block_hash not in self.free_table:
+            raise ValueError(
+                "Attempting to remove block that's not in the evictor")
+        block = self.free_table.pop(block_hash)
+        self.heap.erase(block.total_count, block.last_accessed, block_hash, block.num_hashed_tokens)
+        return block
+
+    @property
+    def num_blocks(self) -> int:
+        return len(self.free_table)
+
+class WeightEvictor(Evictor):
+
+    def __init__(self, base, delta_func):
+        logger.info(f"{self.__class__.__name__} is used, base is {base}.")
+        # self.delta(len) ---> delta_T
+        self.delta = delta_func
+        # block_hash ---> (block, weight)
+        self.free_table: Dict[int, PhysicalTokenBlock] = dict()
+
+        import sys
+        import os
+        module_directory = os.environ.get("CSET_DIR", None)
+        if module_directory is None:
+            logger.error("CSET_DIR environment variable not set")
+        sys.path.append(module_directory)
+        from c_set import c_set
+        self.heap = c_set(base)
+
+    def __contains__(self, block_hash: int) -> bool:
+        return block_hash in self.free_table
+
+    def evict(self) -> PhysicalTokenBlock:
+        if len(self.free_table) == 0:
+            raise ValueError("No usable cache memory left")
+
+        evicted_hash = self.heap.pop_first()
+        evicted_block = self.free_table.pop(evicted_hash)
+        evicted_block.computed = False
+        evicted_block.total_count = 0
+        return evicted_block
+
+    def add(self, block: PhysicalTokenBlock):
+        self.free_table[block.block_hash] = block
+        self.heap.insert(block.total_count * self.delta(block.num_hashed_tokens), block.last_accessed, block.block_hash)
+
+    def remove(self, block_hash: int) -> PhysicalTokenBlock:
+        if block_hash not in self.free_table:
+            raise ValueError(
+                "Attempting to remove block that's not in the evictor")
+        block = self.free_table.pop(block_hash)
+        self.heap.erase(block.total_count * self.delta(block.num_hashed_tokens), block.last_accessed, block_hash)
+        return block
+
+    @property
+    def num_blocks(self) -> int:
+        return len(self.free_table)
+
+def make_evictor(eviction_policy: EvictionPolicy, delta_fun = lambda x: x) -> Evictor:
     if eviction_policy == EvictionPolicy.LRU:
         return LRUEvictor()
     elif eviction_policy == EvictionPolicy.LRU2:
         return LRU2Evictor()
     elif eviction_policy == EvictionPolicy.LRU3:
         return LRU3Evictor()
+    elif eviction_policy == EvictionPolicy.LFU:
+        return LFUEvictor(BASE_FREQ)
     else:
-        raise ValueError(f"Unknown cache eviction policy: {eviction_policy}")
+        c = (2.91200787e-01 + 1.04221165e-04) // 16
+        k = 2 * 1.04221165e-04
+        return WeightEvictor(BASE_FREQ, lambda x: k * x + c)

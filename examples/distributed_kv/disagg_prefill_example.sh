@@ -25,18 +25,22 @@ wait_for_server() {
 }
 
 # prefilling instance, which is the KV producer
-VLLM_DISTRIBUTED_KV_ROLE=producer CUDA_VISIBLE_DEVICES=0 python3 \
+VLLM_DISTRIBUTED_KV_ROLE=producer CUDA_VISIBLE_DEVICES=1 python3 \
     -m vllm.entrypoints.openai.api_server \
     --model /home/tzl/huggingface/modelzoo/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659 \
     --port 8100 \
+    --block-size 64 \
+    --enable-prefix-caching \
     --max-model-len 10000 \
     --gpu-memory-utilization 0.8 &
 
 # decoding instance, which is the KV consumer
-VLLM_DISTRIBUTED_KV_ROLE=consumer CUDA_VISIBLE_DEVICES=1 python3 \
+VLLM_DISTRIBUTED_KV_ROLE=consumer CUDA_VISIBLE_DEVICES=2 python3 \
     -m vllm.entrypoints.openai.api_server \
     --model /home/tzl/huggingface/modelzoo/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659 \
     --port 8200 \
+    --block-size 64 \
+    --enable-prefix-caching \
     --max-model-len 10000 \
     --gpu-memory-utilization 0.8 &
 

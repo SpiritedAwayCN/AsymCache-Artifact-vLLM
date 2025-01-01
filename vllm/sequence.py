@@ -407,7 +407,7 @@ class Sequence:
         self._prompt: Optional[str] = None
         self._prompt_token_ids: Optional[List[int]] = None
         self.slo_urgent = slo_urgent
-        self.suffix_computed_block_locs : List[int] = [0, 0]
+        self.suffix_computed_block_locs : List[int] = [0, 0, 0, 0]
 
         # For decoder-only models, a Sequence is constructed
         # from an LLMInputs instance (the `inputs` arg.)
@@ -548,7 +548,9 @@ class Sequence:
         # this in the future.
         num_tokens = self.num_hashed_tokens_of_block(logical_idx)
         hashed_tokens = self.data.get_prefix_token_ids(num_tokens)
-        return hash((hashed_tokens, self.lora_int_id))
+        return hash((hashed_tokens[0] + hashed_tokens[1] if hashed_tokens[1] else hashed_tokens[0],
+                    self.lora_int_id))
+        # return hash((hashed_tokens, self.lora_int_id))
 
     def num_hashed_tokens_of_block(self, logical_idx: int):
         return logical_idx * self.block_size + self.block_size

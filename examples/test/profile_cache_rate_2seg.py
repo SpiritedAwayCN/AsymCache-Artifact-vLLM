@@ -11,9 +11,10 @@ OUTPUT_DIR = './examples/test/output/'
 llm = LLM(
     model='meta-llama/Meta-Llama-3.1-8B-Instruct',
     enable_prefix_caching=True,
-    tensor_parallel_size=2,
+    tensor_parallel_size=1,
     disable_log_stats=False,
     collect_detailed_traces='all',
+    enable_chunked_prefill=False,
 )
 block_manager = llm.llm_engine.scheduler[0].block_manager
 print(block_manager.__class__.__name__)
@@ -33,7 +34,7 @@ else:
 
 target_input_ids = [BASE_TOKEN_ID] * (TOTAL_LENGTH - POST_TOKEN)
 
-f = open(os.path.join(OUTPUT_DIR, f'profile_cache_2seg_{sys.argv[1]}-tp2.csv'), 'w')
+f = open(os.path.join(OUTPUT_DIR, f'profile_tmp_{sys.argv[1]}-tp1.csv'), 'w')
 f.write('cached_length,' + ','.join([f'p{i+1}' for i in range(MAX_TRY)]))
 f.write(',AVG\n')
 llm.generate(None, 

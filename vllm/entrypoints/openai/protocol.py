@@ -13,7 +13,7 @@ from vllm.entrypoints.chat_utils import ChatCompletionMessageParam
 from vllm.pooling_params import PoolingParams
 from vllm.sampling_params import (BeamSearchParams, GuidedDecodingParams,
                                   RequestOutputKind, SamplingParams)
-from vllm.sequence import Logprob
+from vllm.sequence import Logprob, RequestMetrics
 from vllm.utils import random_uuid
 
 # torch is mocked during docs generation,
@@ -192,6 +192,8 @@ class ChatCompletionRequest(OpenAIBaseModel):
     spaces_between_special_tokens: bool = True
     truncate_prompt_tokens: Optional[Annotated[int, Field(ge=1)]] = None
     prompt_logprobs: Optional[int] = None
+    std_output_tokens: Optional[List[int]] = None
+    std_output_str: Optional[str] = None
     # doc: end-chat-completion-sampling-params
 
     # doc: begin-chat-completion-extra-params
@@ -352,7 +354,9 @@ class ChatCompletionRequest(OpenAIBaseModel):
             output_kind=RequestOutputKind.DELTA if self.stream \
                 else RequestOutputKind.FINAL_ONLY,
             guided_decoding=guided_decoding,
-            logit_bias=self.logit_bias)
+            logit_bias=self.logit_bias,
+            std_output_tokens=self.std_output_tokens,
+            std_output_str=self.std_output_str)
 
     def _get_guided_json_from_tool(
             self) -> Optional[Union[str, dict, BaseModel]]:
@@ -524,6 +528,8 @@ class CompletionRequest(OpenAIBaseModel):
     truncate_prompt_tokens: Optional[Annotated[int, Field(ge=1)]] = None
     allowed_token_ids: Optional[List[int]] = None
     prompt_logprobs: Optional[int] = None
+    std_output_tokens: Optional[List[int]] = None
+    std_output_str: Optional[str] = None
     # doc: end-completion-sampling-params
 
     # doc: begin-completion-extra-params
@@ -647,7 +653,9 @@ class CompletionRequest(OpenAIBaseModel):
                 else RequestOutputKind.FINAL_ONLY,
             guided_decoding=guided_decoding,
             logit_bias=self.logit_bias,
-            allowed_token_ids=self.allowed_token_ids)
+            allowed_token_ids=self.allowed_token_ids,
+            std_output_tokens=self.std_output_tokens,
+            std_output_str=self.std_output_str)
 
     @model_validator(mode="before")
     @classmethod
@@ -739,6 +747,7 @@ class CompletionResponseChoice(OpenAIBaseModel):
             "including encountering the EOS token"),
     )
     prompt_logprobs: Optional[List[Optional[Dict[int, Logprob]]]] = None
+    metrics: Optional[RequestMetrics] = None
 
 
 class CompletionResponse(OpenAIBaseModel):

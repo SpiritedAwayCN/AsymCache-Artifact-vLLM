@@ -15,11 +15,11 @@ async def forward_request(url, data):
         }
         async with session.post(url=url, json=data, headers=headers) as response:
             if response.status == 200:
-                return await response.text()
+                return await response.json()
             else:
                 # If the response status is not 200, return the error message
                 error_message = await response.text()
-                raise Exception(f"Error {response.status}: {error_message}")
+                raise Exception(f"Error {response.status}: {error_message.text()}")
 
 
 @app.route('/v1/completions', methods=['POST'])
@@ -35,6 +35,9 @@ async def handle_request():
         # Get environment variables
         vllm_port_prefill = os.environ.get('VLLM_PREFILL_PORT', '8100')
         vllm_port_decode = os.environ.get('VLLM_DECODE_PORT', '8200')
+        
+        if "std_output_tokens" in prefill_request:
+            prefill_request['std_output_tokens'] = prefill_request['std_output_tokens'][:1]
 
         # Launch prefill and decode tasks
         prefill_task = asyncio.create_task(
@@ -46,9 +49,15 @@ async def handle_request():
 
         # Wait for both tasks to complete
         prefill_result, decode_result = await asyncio.gather(prefill_task, decode_task)
+        
+        # combine the prefill and decode results
+        combined_result = {
+            "prefill": prefill_result,
+            "decode": decode_result,
+        }
 
         # Return the decode result
-        response = await make_response(decode_result)
+        response = await make_response(combined_result)
         response.timeout = None
         return response
 
