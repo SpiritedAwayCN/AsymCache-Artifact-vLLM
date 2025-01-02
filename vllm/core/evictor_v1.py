@@ -249,11 +249,14 @@ class LFUEvictor(Evictor):
 
         import sys
         import os
-        module_directory = os.environ.get("CSET_DIR", None)
-        if module_directory is None:
-            logger.error("CSET_DIR environment variable not set")
+        module_directory = "/home/tzl/vllm-dev/csrc/c_set"
+        if not os.path.exists(module_directory):
+            raise FileNotFoundError(f"Module directory {module_directory} not found!")
         sys.path.append(module_directory)
-        from c_set import c_set_lfu
+        try:
+            from c_set import c_set_lfu  # 导入 c_set_lfu 模块
+        except ImportError as e:
+            raise ImportError(f"Failed to import 'c_set_lfu' from {module_directory}: {e}")
         self.heap = c_set_lfu(base)
 
     def __contains__(self, block_hash: int) -> bool:
@@ -268,6 +271,7 @@ class LFUEvictor(Evictor):
         evicted_block = self.free_table.pop(evicted_hash)
         evicted_block.computed = False
         evicted_block.total_count = 0
+        evicted_block.used_by_decode = False
         return evicted_block
 
     def add(self, block: PhysicalTokenBlock):
@@ -300,6 +304,8 @@ class WeightEvictor(Evictor):
         module_directory = os.environ.get("CSET_DIR", None)
         if module_directory is None:
             logger.error("CSET_DIR environment variable not set")
+        else:
+            logger.info(f"Using CSET_DIR: {module_directory}")
         sys.path.append(module_directory)
         from c_set import c_set
         self.heap = c_set(base)
@@ -315,6 +321,7 @@ class WeightEvictor(Evictor):
         evicted_block = self.free_table.pop(evicted_hash)
         evicted_block.computed = False
         evicted_block.total_count = 0
+        evicted_block.used_by_decode = False
         return evicted_block
 
     def add(self, block: PhysicalTokenBlock):
