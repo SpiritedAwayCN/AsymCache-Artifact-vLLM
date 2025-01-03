@@ -96,7 +96,7 @@ set_target_properties(CUDA::nvToolsExt PROPERTIES
  IMPORTED_LOCATION ${NVTOOLSEXT_LIBRARY}
 )
 find_package(Torch REQUIRED)
-
+include_directories(/home/tzl/vllm-dev/.deps/cutlass-src/include)
 #
 message(STATUS "Enabling core extension.")
 

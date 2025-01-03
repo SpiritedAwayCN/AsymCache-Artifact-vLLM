@@ -6,7 +6,7 @@
 set -ex
 benchmark() {
   results_folder="./results"
-  model="LargeWorldModel/LWM-Text-1M"
+  model="/home/tzl/huggingface/modelzoo/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659"
   dataset_name="sonnet"
   dataset_path="../sonnet_4x.txt"
   num_prompts=100

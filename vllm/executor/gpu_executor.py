@@ -134,7 +134,7 @@ class GPUExecutor(ExecutorBase):
     def execute_model(
         self, execute_model_req: ExecuteModelRequest, block_manager: Optional[Union[BlockSpaceManagerV1, BlockSpaceManagerV2]] = None
     ) -> Optional[List[Union[SamplerOutput, PoolerOutput]]]:
-        output = self.driver_worker.execute_model(execute_model_req,block_manager)
+        output = self.driver_worker.execute_model(execute_model_req, block_manager)
         return output
 
     def add_lora(self, lora_request: LoRARequest) -> bool:

@@ -200,7 +200,7 @@ class KV_transfer_agent:
 
         logger.debug("[rank%d]: KV send DONE.", torch.distributed.get_rank())
 
-    def direct_send_kv_caches_and_hidden_states(
+    def direct_send_kv_caches_and_hidden_states_old(
         self,
         model_executable: torch.nn.Module,
         model_input: "ModelInputForGPUWithSamplingMetadata",
@@ -240,7 +240,7 @@ class KV_transfer_agent:
 
             keys = torch.cat(keys, dim=0)
             values = torch.cat(values, dim=0)
-            
+            logger.debug(f"hidden send:{hidden_or_intermediate_states[start_pos:end_pos]}")
             if self.send_pipe is not None:
                 logger.debug("[rank%d]: KV DIRECT send.", torch.distributed.get_rank())
                 self.send_pipe.send_tensor_list([current_tokens, torch.ones_like(current_tokens, dtype=bool), keys, values, hidden_or_intermediate_states[start_pos:end_pos]])
@@ -307,7 +307,7 @@ class KV_transfer_agent:
             keys: torch.Tensor = ret[2]
             values: torch.Tensor = ret[3]
             hidden: torch.Tensor = ret[4]
-
+            print(f"hidden received:{hidden}")
             num_computed_tokens = roi.shape[0]
             num_computed_tokens_list.append(num_computed_tokens)
 
@@ -366,10 +366,11 @@ class KV_transfer_agent:
                 "states, skip model forwarding.", torch.distributed.get_rank())
             hidden_or_intermediate_states = torch.cat(
                 hidden_or_intermediate_states_for_one_req, dim=0)
+            logger.debug(f"hidden_or_intermediate_states:{hidden_or_intermediate_states}")
 
         return hidden_or_intermediate_states, bypass_model_exec, model_input
 
-    def direct_recv_kv_caches_and_hidden_states(
+    def direct_recv_kv_caches_and_hidden_states_old(
         self, model_executable: torch.nn.Module,
         model_input: "ModelInputForGPUWithSamplingMetadata",
         kv_caches: List[torch.Tensor]
@@ -407,7 +408,127 @@ class KV_transfer_agent:
 
             # logger.debug("direct receiving")
             receive_tensors = self.recv_pipe.receive_tensor_list()
+            # logger.debug(f"receive_tensors in vllm adapter:{receive_tensors}")
+            input_tokens = receive_tensors[0]
             
+            roi = receive_tensors[1]
+            
+            keys = receive_tensors[2]
+            values = receive_tensors[3]
+            
+            hidden = receive_tensors[4]
+            # import copy
+            # hidden = copy.deepcopy(hidden)
+            # logger.debug(f"hidden received:{hidden}")
+            if input_tokens is None:
+                # didn't find any match.
+                bypass_model_exec = False
+                num_computed_tokens_list.append(0)
+                continue
+            
+            num_computed_tokens = roi.shape[0]
+            num_computed_tokens_list.append(num_computed_tokens)
+
+            # check if both KV cache and the hidden states are received
+            # If not, need to redo the forwarding to compute missing states
+            if not all([(num_computed_tokens == num_tokens), hidden is not None
+                        ]):
+                bypass_model_exec = False
+
+            # update the end position based on how many tokens are cached.
+            end_pos = start_pos + num_computed_tokens
+
+            # put received KV caches into paged memory
+            # for i in range(model_executable.model.start_layer,
+            #                model_executable.model.end_layer):
+
+            #     kv_cache = kv_caches[i - model_executable.model.start_layer]
+            #     layer = model_executable.model.layers[i]
+
+            #     key_cache, value_cache = kv_cache[0], kv_cache[1]
+            #     ops.reshape_and_cache_flash(
+            #         keys[i - model_executable.model.start_layer].to(
+            #             key_cache.device),
+            #         values[i - model_executable.model.start_layer].to(
+            #             value_cache.device),
+            #         key_cache,
+            #         value_cache,
+            #         slot_mapping[start_pos:end_pos],
+            #         layer.self_attn.attn.kv_cache_dtype,
+            #         layer.self_attn.attn._k_scale,
+            #         layer.self_attn.attn._v_scale,
+            #     )
+            print(f"before append:{hidden}")
+            hidden_or_intermediate_states_for_one_req.append(hidden)
+            print(f"hidden_or_intermediate_states_for_one_req:{hidden_or_intermediate_states_for_one_req}")
+
+        if not bypass_model_exec:
+            # Some of the KV cache is not retrieved
+            # so we need to adjust model_input and redo the forwarding.
+            logger.debug(
+                "[rank%d]: Failed to receive all KVs and hidden "
+                "states, redo model forwarding.", torch.distributed.get_rank())
+            rebuilt_model_input = build_partial_prefill_input(
+                model_input,
+                input_tokens_list,
+                num_computed_tokens_list,
+                start_pos_list,
+                slot_mapping,
+                device=input_tokens_tensor.device,
+            )
+            model_input = rebuilt_model_input
+            hidden_or_intermediate_states = None
+        else:
+            logger.debug(
+                "[rank%d]: Successfully received all KVs and hidden "
+                "states, skip model forwarding.", torch.distributed.get_rank())
+            print(f"hidden_or_intermediate_states_for_one_req:{hidden_or_intermediate_states_for_one_req}")
+            hidden_or_intermediate_states = torch.cat(
+                hidden_or_intermediate_states_for_one_req, dim=0)
+            print(f"hidden_or_intermediate_states:{hidden_or_intermediate_states}")
+
+        return hidden_or_intermediate_states, bypass_model_exec, model_input
+
+    def direct_recv_kv_caches_and_hidden_states(
+        self, model_executable: torch.nn.Module,
+        model_input: "ModelInputForGPUWithSamplingMetadata",
+        kv_caches: List[torch.Tensor],
+        block_manager: Union[BlockSpaceManagerV1, BlockSpaceManagerV2]
+    ) -> Tuple[Union[torch.Tensor, IntermediateTensors], bool,
+               "ModelInputForGPUWithSamplingMetadata"]:
+        
+        # When this flag is set to False, it means that at least for one
+        # request its corresponding KV cache or hidden state is missing.
+        # In this case we need to do prefilling to recompute missing KV cache
+        # and hidden states.
+        bypass_model_exec = True
+
+        input_tokens_tensor = model_input.input_tokens
+        seq_lens = model_input.attn_metadata.seq_lens
+        slot_mapping = model_input.attn_metadata.slot_mapping.flatten()
+
+        hidden_or_intermediate_states_for_one_req = []
+
+        input_tokens_list = []
+        num_computed_tokens_list = []
+        start_pos_list = []
+
+        # enumerate different requests
+        # FIXME(Kuntai): This impl assumes that all requests are prefill.
+        for idx, slen in enumerate(seq_lens):
+
+            start_pos = sum(seq_lens[:idx])
+            end_pos = start_pos + slen
+            current_tokens = input_tokens_tensor[start_pos:end_pos]
+            num_tokens = slen
+
+            # collecting data for rebuilding the input
+            input_tokens_list.append(current_tokens)
+            start_pos_list.append(start_pos)
+
+            # logger.debug("direct receiving")
+            receive_tensors = self.recv_pipe.receive_tensor_list()
+            # logger.debug(f"receive_tensors in vllm adapter:{receive_tensors}")
             input_tokens = receive_tensors[0]
             
             roi = receive_tensors[1]
@@ -434,28 +555,9 @@ class KV_transfer_agent:
             # update the end position based on how many tokens are cached.
             end_pos = start_pos + num_computed_tokens
 
-            # put received KV caches into paged memory
-            for i in range(model_executable.model.start_layer,
-                           model_executable.model.end_layer):
-
-                kv_cache = kv_caches[i - model_executable.model.start_layer]
-                layer = model_executable.model.layers[i]
-
-                key_cache, value_cache = kv_cache[0], kv_cache[1]
-                ops.reshape_and_cache_flash(
-                    keys[i - model_executable.model.start_layer].to(
-                        key_cache.device),
-                    values[i - model_executable.model.start_layer].to(
-                        value_cache.device),
-                    key_cache,
-                    value_cache,
-                    slot_mapping[start_pos:end_pos],
-                    layer.self_attn.attn.kv_cache_dtype,
-                    layer.self_attn.attn._k_scale,
-                    layer.self_attn.attn._v_scale,
-                )
 
             hidden_or_intermediate_states_for_one_req.append(hidden)
+            # print(f"hidden_or_intermediate_states_for_one_req:{hidden_or_intermediate_states_for_one_req}")
 
         if not bypass_model_exec:
             # Some of the KV cache is not retrieved
@@ -477,12 +579,108 @@ class KV_transfer_agent:
             logger.debug(
                 "[rank%d]: Successfully received all KVs and hidden "
                 "states, skip model forwarding.", torch.distributed.get_rank())
+            print(f"hidden_or_intermediate_states_for_one_req:{hidden_or_intermediate_states_for_one_req}")
             hidden_or_intermediate_states = torch.cat(
                 hidden_or_intermediate_states_for_one_req, dim=0)
+            print(f"hidden_or_intermediate_states:{hidden_or_intermediate_states}")
 
         return hidden_or_intermediate_states, bypass_model_exec, model_input
     
-    def send_hash(
+    def direct_send_kv_caches(
+        self,
+        model_executable: torch.nn.Module,
+        kv_caches: List[torch.Tensor],
+        query_hashes: List[int],
+        full_hashes: List[int],
+        block_manager: Optional[Union[BlockSpaceManagerV1, BlockSpaceManagerV2]] = None
+    ) -> None:
+
+        # Function to retrieve block IDs and matching hashes based on query hashes
+        def get_block_ids(query_hashes: List[int], full_hashes: List[int], block_manager: Union[BlockSpaceManagerV1, BlockSpaceManagerV2]) -> Tuple[List[int], List[int]]:
+            blockid_list = []
+            hash_match_list = []
+            logger.debug(f"getting blockids")
+            for hash in query_hashes:
+                # logger.debug(f"getting blockids:{hash}")
+                block_ids = block_manager.get_hash_block_ids(hash)
+                if block_ids:
+                    blockid_list.append(block_ids)
+                    hash_match_list.append(hash)
+            print(f"blockid_list: {blockid_list}")
+            block_manager.gpu_allocator.change_block_used_status(full_hashes, True)
+            block_manager.gpu_allocator.show_evictor_buffer()
+            
+            return blockid_list, hash_match_list
+
+        block_ids, hash_matches = get_block_ids(query_hashes, full_hashes, block_manager)
+        
+        if len(block_ids) == 0:
+            logger.warning("No matching block IDs found. Sending empty tensors.")
+            if self.send_pipe is not None:
+                empty_tensor = torch.empty(0, device="cuda")
+                self.send_pipe.send_tensor_list([empty_tensor, empty_tensor, empty_tensor])
+            return
+
+        # generate an on-device tensor from hash_matches
+        hash_matches = torch.tensor(hash_matches, dtype=torch.int64, device="cuda")
+        start_layer = model_executable.model.start_layer
+        end_layer = model_executable.model.end_layer
+
+        # Collect all keys and values at once
+        all_keys, all_values = [], []
+        
+        for layer_id in range(start_layer, end_layer):
+            kv_cache = kv_caches[layer_id - start_layer]
+
+            # KV Cache shape: [2, total_blocks, block_size, num_heads, head_dim]
+            key_cache = kv_cache[0]  # Shape: [total_blocks, block_size, num_heads, head_dim]
+            value_cache = kv_cache[1]  # Shape: [total_blocks, block_size, num_heads, head_dim]
+
+            # Gather keys and values for all blocks
+            keys = torch.cat([key_cache[block_id].unsqueeze(0) for block_id in block_ids], dim=0)  # Shape: [num_blocks, block_size, num_heads, head_dim]
+            values = torch.cat([value_cache[block_id].unsqueeze(0) for block_id in block_ids], dim=0)  # Shape: [num_blocks, block_size, num_heads, head_dim]
+
+            all_keys.append(keys)  # Shape: [num_layers, num_blocks, block_size, num_heads, head_dim]
+            all_values.append(values)  # Shape: [num_layers, num_blocks, block_size, num_heads, head_dim]
+
+        all_keys = torch.stack(all_keys, dim=0)  # Final shape: [num_layers, num_blocks, block_size, num_heads, head_dim]
+        all_values = torch.stack(all_values, dim=0)  # Final shape: [num_layers, num_blocks, block_size, num_heads, head_dim]
+
+        if self.send_pipe is not None:
+            logger.debug("[rank%d]: KV DIRECT send.", torch.distributed.get_rank())
+            # Send all keys, values, and hash_matches at once
+            self.send_pipe.send_tensor_list([all_keys, all_values, hash_matches])
+
+    def direct_recv_kv_caches(
+        self,
+        model_executable: torch.nn.Module,
+        kv_caches: List[torch.Tensor],
+        block_manager: Union[BlockSpaceManagerV1, BlockSpaceManagerV2]
+    ) -> None:
+        num_tensors = 3  # Expecting keys, values, and hash_matches
+        received_tensors = self.recv_pipe.receive_tensor_list(num_tensors)
+
+        all_keys, all_values, hash_matches = received_tensors  # Shapes: [num_layers, num_blocks, block_size, num_heads, head_dim]
+        hash_matches = hash_matches.tolist()
+        start_layer = model_executable.model.start_layer
+        end_layer = model_executable.model.end_layer
+
+        for idx, hash_val in enumerate(hash_matches):
+            # Retrieve block IDs from hash values
+            block_ids = block_manager.gpu_allocator.get_block_ids_from_cache(hash_val)
+            block_manager.gpu_allocator.change_block_status(hash_val, True)
+            for layer_id in range(start_layer, end_layer):
+                kv_cache = kv_caches[layer_id - start_layer]
+
+                # KV Cache shape: [2, total_blocks, block_size, num_heads, head_dim]
+                key_cache = kv_cache[0]  # Shape: [total_blocks, block_size, num_heads, head_dim]
+                value_cache = kv_cache[1]  # Shape: [total_blocks, block_size, num_heads, head_dim]
+
+                # Update KV cache at the target block ID
+                key_cache[block_ids] = all_keys[layer_id][idx]  # Shape: [block_size, num_heads, head_dim]
+                value_cache[block_ids] = all_values[layer_id][idx]  # Shape: [block_size, num_heads, head_dim]
+
+    def get_full_hash(
         self,
         model_input: "ModelInputForGPUWithSamplingMetadata",
         block_size: Optional[int] = 16,
@@ -493,7 +691,6 @@ class KV_transfer_agent:
         else:
             hash_list = []
         # sending signals to decode
-        hash_num = 0
         for idx, slen in enumerate(seq_lens):
             start_pos = sum(seq_lens[:idx])
             end_pos = start_pos + slen
@@ -501,32 +698,46 @@ class KV_transfer_agent:
             seq_id = model_input.sampling_metadata.seq_groups[idx].seq_ids[0]
             token_ids = model_input.sampling_metadata.seq_groups[idx].seq_data[seq_id].get_token_ids()
             block_num = len(token_ids) // block_size
-            hash_num += block_num
+            # print(f"seq_len:{slen} = len(token_ids):{len(token_ids)}")
             for i in range(block_num):
                 block_token_ids = token_ids[:(i+1) * block_size]
-                tupled_token_ids = tuple(block_token_ids)
-                # logger.debug(f"RANK:{torch.distributed.get_rank()}:{block_token_ids}")
+                tupled_token_ids = (tuple(block_token_ids), None)
                 hash_block_token_ids = hash((tupled_token_ids,0))
                 # make hash as an tensor
-                seq_id2hash = torch.tensor([seq_id,hash_block_token_ids], dtype=torch.int64)
-                hash_list.append(seq_id2hash)
-        logger.debug(f"Send total_hash_num:{hash_num}")
-        block_hash_num = torch.tensor([-1,hash_num], dtype=torch.int64)
-        self.send_pipe.send_tensor_list([block_hash_num])
-        logger.debug(f"RANK:{torch.distributed.get_rank()}  sending hash in adapter,hash list:{hash_list}")
-        self.send_pipe.send_tensor_list(hash_list)
-        logger.debug(f"RANK:{torch.distributed.get_rank()}  sending hash complete")
+                # seq_id2hash = torch.tensor([seq_id,hash_block_token_ids], dtype=torch.int64, device="cpu")
+                hash_list.append(hash_block_token_ids)
+        # make hash_list into a tensor
+        hash_list = torch.tensor(hash_list, dtype=torch.int64, device="cpu")
+        return hash_list
+    
+    def send_hash(
+        self,
+        hashes: List[int],
+        model_input: "ModelInputForGPUWithSamplingMetadata",
+        block_size: Optional[int] = 16,
+    ):
+        # convert to tensor list
+        # make List into tensor
+        full_hash = self.get_full_hash(model_input, block_size)
+        hash_list = torch.tensor(hashes, dtype=torch.int64, device="cpu")
+        # for small size data,use cpu pipe
+        self.send_signal_pipe.send_tensor_list([hash_list,full_hash])
     
     def recv_hash(self):
+        hash_block_token_ids_list = self.recv_signal_pipe.receive_tensor_list(2)
+        # [1]:hash_list 
+        return hash_block_token_ids_list[0].numpy(), hash_block_token_ids_list[1].numpy()
+    
+    def recv_hash_old(self):
         # try executing receive hash in limited time
         # receive num of hash
         logger.debug(f"RANK:{torch.distributed.get_rank()}  receiving hash num in adapter")
-        block_hash_num_ts_list = self.recv_pipe.receive_tensor_list(1)
+        block_hash_num_ts_list = self.recv_signal_pipe.receive_tensor_list(1)
         assert len(block_hash_num_ts_list) == 1
         block_hash_num_ts = block_hash_num_ts_list[0]
         block_hash_num = block_hash_num_ts[1]
         logger.debug(f"RANK:{torch.distributed.get_rank()}  receiving {block_hash_num} hashes in adapter")
-        hash_block_token_ids = self.recv_pipe.receive_tensor_list(block_hash_num)
+        hash_block_token_ids = self.recv_signal_pipe.receive_tensor_list(block_hash_num)
         logger.debug(f"RANK:{torch.distributed.get_rank()}  receiving hash complete")
         return hash_block_token_ids
     

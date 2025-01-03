@@ -907,6 +907,7 @@ def unified_flash_attention(
 
     if decode_meta := attn_metadata.decode_metadata:
         # Decoding run.
+        # print("run decode kernel")
         _, num_head, head_dim = decode_query.shape
         decode_query = decode_query.reshape(-1, decode_meta.decode_query_len,
                                             num_head, head_dim)

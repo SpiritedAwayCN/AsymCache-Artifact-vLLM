@@ -315,7 +315,6 @@ class LocalOrDistributedWorkerBase(WorkerBase):
         # If there is no input, we don't need to execute the model.
         if worker_input.num_seq_groups == 0:
             return []
-
         intermediate_tensors = None
         orig_model_execute_time = 0.0
         if not get_pp_group().is_first_rank:

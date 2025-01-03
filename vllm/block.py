@@ -39,6 +39,8 @@ class PhysicalTokenBlock:
         self.total_count = 0
 
         self.computed = False
+        
+        self.used_by_decode: bool = False
 
     def __repr__(self) -> str:
         return (f'PhysicalTokenBlock(device={self.device}, '
@@ -75,16 +77,11 @@ class BlockTable:
         # find block
         block_ids = None
         for block in self._blocks:
-            print(f"block.block_hash: {block.block_hash}, block_hash: {block_hash}")
+            # print(f"block.block_hash: {block.block_hash}, block_hash: {block_hash}")
             if block.block_hash == block_hash:
                 block_ids = block.block_number
                 break
-        # find pos in self._block_ids
-        if block_ids is None:
-            return []
-        pos = self._block_ids.index(block_ids)
-        # return the block ids as a list
-        return self._block_ids[0:pos+1]
+        return block_ids
     
     def append(self, block: PhysicalTokenBlock):
         self._blocks.append(block)

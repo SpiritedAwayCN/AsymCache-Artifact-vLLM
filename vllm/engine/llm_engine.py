@@ -345,7 +345,7 @@ class LLMEngine:
             prompt_adapter_config=prompt_adapter_config,
             observability_config=self.observability_config,
         )
-
+        
         if not self.model_config.embedding_mode:
             self._initialize_kv_caches()
 
@@ -428,6 +428,7 @@ class LLMEngine:
                 if model_config.use_async_output_proc else None)
             for v_id in range(parallel_config.pipeline_parallel_size)
         ]
+
 
         # Metric Logging.
         if self.log_stats:
@@ -697,7 +698,8 @@ class LLMEngine:
         ]
         min_cost_scheduler = self.scheduler[costs.index(min(costs))]
         min_cost_scheduler.add_seq_group(seq_group)
-
+        
+    from typing import Optional
     def stop_remote_worker_execution_loop(self) -> None:
         self.model_executor.stop_remote_worker_execution_loop()
 

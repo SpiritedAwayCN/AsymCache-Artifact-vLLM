@@ -1,7 +1,5 @@
 #!/bin/bash
 
-export CSET_DIR=/home/sca/vllm/csrc/c_set/
-export HF_ENDPOINT=https://hf-mirror.com
 
 # Model: neuralmagic/Meta-Llama-3-70B-Instruct-FP8-KV 
 # Query: 2048 input tokens, 11 output tokens, QPS 4, 500 requests
@@ -27,17 +25,17 @@ wait_for_server() {
 
 launch_disagg_prefill() {
   echo "launching disagg prefill"
-  model="LargeWorldModel/LWM-Text-1M" 
+  model="/home/tzl/huggingface/modelzoo/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659" 
   # disagg prefill
   # optional for test:
   # --disable-async-output-proc
   # --enable-prefix-caching
-  VLLM_PORT=12346 VLLM_DISTRIBUTED_KV_ROLE=producer CUDA_VISIBLE_DEVICES=0,1 python3 \
+  VLLM_PORT=12481 VLLM_DISTRIBUTED_KV_ROLE=producer CUDA_VISIBLE_DEVICES=0,1 python3 \
       -m vllm.entrypoints.openai.api_server \
       --model $model \
       --port 8100 \
       --max-model-len 50000 \
-      --tensor-parallel 2 \
+      --tensor-parallel-size 2 \
       --disable-log-stats \
       --disable-log-requests \
       --disable-async-output-proc \
@@ -45,12 +43,12 @@ launch_disagg_prefill() {
       --enable_chunked_prefill False \
       --block-size 64 \
       --gpu-memory-utilization 0.8 &> PREFILL.txt &
-  VLLM_PORT=12346 VLLM_DISTRIBUTED_KV_ROLE=consumer CUDA_VISIBLE_DEVICES=2,3 python3 \
+  VLLM_PORT=12481 VLLM_DISTRIBUTED_KV_ROLE=consumer CUDA_VISIBLE_DEVICES=2,3 python3 \
     -m vllm.entrypoints.openai.api_server \
     --model $model \
     --port 8200 \
     --max-model-len 50000 \
-    --tensor-parallel 2 \
+    --tensor-parallel-size 2 \
     --disable-log-stats \
     --disable-log-requests \
     --disable-async-output-proc \
@@ -72,6 +70,7 @@ main() {
   # export VLLM_LOGGING_LEVEL=DEBUG
   export VLLM_HOST_IP=$(hostname -I | awk '{print $1}')
   export VLLM_ALLOW_DEPRECATED_BLOCK_MANAGER_V1=1 
+  export CSET_DIR=../../csrc/c_set/
   # export CUDA_LAUNCH_BLOCKING=1
   launch_disagg_prefill
 }

@@ -61,7 +61,7 @@ from vllm.core.block_manager_v1 import BlockSpaceManagerV1
 from vllm.core.block_manager_v2 import BlockSpaceManagerV2
 if TYPE_CHECKING:
     from vllm.attention.backends.abstract import AttentionBackend
-
+from vllm.worker.CacheGuardThread import CacheGuardThread
 logger = init_logger(__name__)
 
 LORA_WARMUP_RANK = 8
@@ -1079,6 +1079,7 @@ class GPUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
         input_registry: InputRegistry = INPUT_REGISTRY,
         mm_registry: MultiModalRegistry = MULTIMODAL_REGISTRY,
     ):
+        logger.debug("Initializing GPUModelRunnerBase...")
         self.model_config = model_config
         self.parallel_config = parallel_config
         self.scheduler_config = scheduler_config
@@ -1090,7 +1091,7 @@ class GPUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
         self.prompt_adapter_config = prompt_adapter_config
         self.return_hidden_states = return_hidden_states
         self.observability_config = observability_config
-
+        self.block_manager : Optional[Union[BlockSpaceManagerV1,BlockSpaceManagerV2]] = None
         self.device = self.device_config.device
         self.pin_memory = is_pin_memory_available()
 
@@ -1100,7 +1101,10 @@ class GPUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
         self.max_seq_len_to_capture = self.model_config.max_seq_len_to_capture
         self.max_batchsize_to_capture = _get_max_graph_batch_size(
             self.scheduler_config.max_num_seqs)
-
+        
+        
+        self.guard_thread = None
+        # self.cache_guard_thread = CacheGuardThread(
         self.graph_runners: List[Dict[int, CUDAGraphRunner]] = [
             {} for _ in range(self.parallel_config.pipeline_parallel_size)
         ]
@@ -1110,6 +1114,7 @@ class GPUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
         self.has_seqlen_agnostic = model_config.contains_seqlen_agnostic_layers(
             parallel_config)
 
+        
         # When using CUDA graph, the input block tables must be padded to
         # max_seq_len_to_capture. However, creating the block table in
         # Python can be expensive. To optimize this, we cache the block table
@@ -1145,6 +1150,8 @@ class GPUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
 
         # Lazy initialization
         self.model: nn.Module  # Set after load_model
+        
+        
         # Set after load_model.
         self.lora_manager: Optional[LRUCacheWorkerLoRAManager] = None
         self.prompt_adapter_manager: LRUCacheWorkerPromptAdapterManager = None
@@ -1164,7 +1171,19 @@ class GPUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
         self.sampling_metadata_cache: SamplingMetadataCache = \
               SamplingMetadataCache() \
                 if self.parallel_config.pipeline_parallel_size == 1 else None
-
+    
+    def launch_guarding_thread(self, kv_cache: List[torch.Tensor]):
+        logger.debug("Launching CacheGuardThread...")
+        assert dist_kv.IS_KV_PRODUCER
+        kv_transfer_agent = get_disagg_group()
+        # check kv transfer agent type
+        assert isinstance(kv_transfer_agent, dist_kv.KV_transfer_agent)
+        self.guard_thread = CacheGuardThread(kv_transfer_agent, get_block_manager= self.block_manager, model_executable = self.model, kv_caches= kv_cache)
+        self.guard_thread.start()
+        
+    def shutdown(self): 
+        self.guard_thread.stop()
+        
     def load_model(self) -> None:
         logger.info("Starting to load model %s...", self.model_config.model)
         with DeviceMemoryProfiler() as m:
@@ -1727,6 +1746,14 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         num_steps: int = 1,
         block_manager: Optional[Union[BlockSpaceManagerV1, BlockSpaceManagerV2]] = None
     ) -> Optional[Union[List[SamplerOutput], IntermediateTensors]]:
+        
+        if self.block_manager is None and block_manager is not None:
+            # assert block_manager is not None, "block_manager is None, Error in initialize block manager"
+            self.block_manager = block_manager
+            logger.debug("block manager initialized")
+            if self.guard_thread is None and self.need_send_kv(model_input, kv_caches):
+                self.launch_guarding_thread(kv_caches)
+
         if num_steps > 1:
             raise ValueError("num_steps > 1 is not supported in ModelRunner")
         if self.lora_config:
@@ -1743,9 +1770,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                 model_input.prompt_adapter_mapping)
 
         self.attn_state.begin_forward(model_input)
-
         # Currently cuda graph is only supported by the decode phase.
-        assert model_input.attn_metadata is not None
         prefill_meta = model_input.attn_metadata.prefill_metadata
         decode_meta = model_input.attn_metadata.decode_metadata
         # TODO(andoorve): We can remove this once all
@@ -1759,25 +1784,31 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         else:
             model_executable = self.model
 
+        def get_scheduled_seqids(model_input: ModelInputForGPUWithSamplingMetadata):
+            seq_id_list = []
+            for idx, slen in enumerate(model_input.attn_metadata.seq_lens):
+                seq_id = model_input.sampling_metadata.seq_groups[idx].seq_ids[0]
+                seq_id_list.append(seq_id)
+            logger.debug(f"RANK:{torch.distributed.get_rank()}, seq_id_list: {seq_id_list}")
+        
+
         # Receive KV cache in distributed KV cache transfer setting
         # In disagg prefill setting, it will also recv hidden states and bypass
         # model forwarding
         # In KV cache database setting, it will change the model input so that
         # we can skip prefilling on tokens that successfully received KV caches
         # NOTE: The receive operation is blocking
-        bypass_model_exec = False
+        # bypass_model_exec = False
         if self.need_recv_kv(model_input, kv_caches):
-            get_disagg_group().send_hash(model_input, block_manager.block_size)
-            # logger.debug(f"receiving tensors")
-            hidden_or_intermediate_states, bypass_model_exec, model_input = \
-                get_disagg_group().direct_recv_kv_caches_and_hidden_states(
-                    # model is used to know which layer the current worker
-                    # is working on, so that we can receive KV for only those
-                    # layers.
-                    model_executable,
-                    model_input,
-                    kv_caches=kv_caches,
-                    # block_manager=block_manager,
+            logger.debug("receiving kv")
+            query_hash_list = self.block_manager.get_new_block_hash()
+            logger.debug(f"hash_list: {query_hash_list}")
+            # get_scheduled_seqids(model_input)
+            get_disagg_group().send_hash(query_hash_list, model_input, block_manager.block_size)
+            get_disagg_group().direct_recv_kv_caches(
+                model_executable,
+                kv_caches,
+                self.block_manager,
                 )
 
         multi_modal_kwargs = model_input.multi_modal_kwargs or {}
@@ -1791,17 +1822,16 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             model_forward_end = torch.cuda.Event(enable_timing=True)
             model_forward_start.record()
 
-        if not bypass_model_exec:
-            with set_forward_context(model_input.attn_metadata):
-                hidden_or_intermediate_states = model_executable(
-                    input_ids=model_input.input_tokens,
-                    positions=model_input.input_positions,
-                    kv_caches=kv_caches,
-                    attn_metadata=model_input.attn_metadata,
-                    intermediate_tensors=intermediate_tensors,
-                    **MultiModalInputs.as_kwargs(multi_modal_kwargs,
-                                                 device=self.device),
-                    **seqlen_agnostic_kwargs)
+        with set_forward_context(model_input.attn_metadata):
+            hidden_or_intermediate_states = model_executable(
+                input_ids=model_input.input_tokens,
+                positions=model_input.input_positions,
+                kv_caches=kv_caches,
+                attn_metadata=model_input.attn_metadata,
+                intermediate_tensors=intermediate_tensors,
+                **MultiModalInputs.as_kwargs(multi_modal_kwargs,
+                                                device=self.device),
+                **seqlen_agnostic_kwargs)
 
         if (self.observability_config is not None
                 and self.observability_config.collect_model_forward_time):
@@ -1809,17 +1839,18 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
 
         # Sending KV cache in distributed KV cache transfer setting
         # NOTE: the send operation is non-blocking
-        if self.need_send_kv(model_input, kv_caches):
-            hashes = get_disagg_group().recv_hash()
-            get_disagg_group().direct_send_kv_caches_and_hidden_states(
-                # model_executable is used to know which layer the current
-                # worker is working on, so that we can send KV for only those
-                # layers.
-                model_executable,
-                model_input,
-                kv_caches,
-                hidden_or_intermediate_states,
-            )
+        # if self.need_send_kv(model_input, kv_caches):
+        #     logger.debug(f"Sending kv")
+        #     query_hashes, full_hashes = get_disagg_group().recv_hash()
+        #     # logger.debug(f"hashes: {query_hashes}, {full_hashes}")
+        #     # get_scheduled_seqids(model_input)
+        #     get_disagg_group().direct_send_kv_caches(
+        #         model_executable,
+        #         kv_caches,
+        #         query_hashes,
+        #         full_hashes,
+        #         block_manager
+        #     )
 
         # Compute the logits in the last pipeline stage.
         if not get_pp_group().is_last_rank:
@@ -1839,10 +1870,9 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                 hidden_or_intermediate_states.tensors["model_forward_time"] = (
                     torch.tensor(model_forward_time + orig_model_forward_time))
             return hidden_or_intermediate_states
-
+        
         logits = self.model.compute_logits(hidden_or_intermediate_states,
-                                           model_input.sampling_metadata)
-
+                                           model_input.sampling_metadata) 
         if not self.is_driver_worker:
             return []
 
@@ -1850,6 +1880,8 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             model_input.async_callback()
 
         # Sample the next token.
+        # get logits shape
+        logits_shape = logits.shape
         output: SamplerOutput = self.model.sample(
             logits=logits,
             sampling_metadata=model_input.sampling_metadata,
@@ -1886,6 +1918,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
 
             output.hidden_states = hidden_states
 
+        # logger.debug(f"seq complete")
         return [output]
 
     def need_recv_kv(self, model_input, kv_caches) -> bool:
@@ -1908,7 +1941,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         is_prefill_run = prefill_meta is not None
 
         return dist_kv.IS_KV_CONSUMER and (
-            not is_profile_run) and is_prefill_run
+            not is_profile_run) and is_prefill_run and self.block_manager is not None
 
     def need_send_kv(self, model_input, kv_caches) -> bool:
         """Check if we need to send kv-cache to the other worker.
