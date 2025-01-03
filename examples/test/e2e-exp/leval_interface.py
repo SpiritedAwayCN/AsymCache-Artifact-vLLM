@@ -20,8 +20,8 @@ AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
 API_URL = 'http://localhost:8000/v1/completions'
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--div', '-d', type=int, default=20)
-parser.add_argument('--qps', '-q', type=float, default=1)
+parser.add_argument('--div', '-d', type=int, default=80)
+parser.add_argument('--qps', '-q', type=float, default=0.5)
 args = parser.parse_args()
 
 output_file_name = f"outputs_q{args.qps}_d{args.div}.jsonl"
@@ -114,6 +114,8 @@ async def schedule_request(output_file):
             await asyncio.sleep(timestamp - now)
         task = asyncio.create_task(fetch(prompt, answer, output_file))
         tasks.append(task)
+        
+        # break
     
     await asyncio.gather(*tasks)
         
