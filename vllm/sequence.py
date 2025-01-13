@@ -120,6 +120,8 @@ class RequestMetrics:
     model_forward_time: Optional[float] = None
     model_execute_time: Optional[float] = None
     prefill_forward_time: Optional[float] = None
+    suffix_computed_block_locs: Optional[List[int]] = None
+    first_compute_start: Optional[int] = None
 
 
 class SequenceDataDelta(
@@ -676,7 +678,9 @@ class SequenceGroup:
                                       last_token_time=arrival_time,
                                       first_scheduled_time=None,
                                       first_token_time=None,
-                                      time_in_queue=None)
+                                      time_in_queue=None,
+                                      suffix_computed_block_locs=None,
+                                      first_compute_start=None)
         self.lora_request = lora_request
         self.prompt_logprobs: Optional[PromptLogprobs] = None
         self.state = SequenceGroupState()
@@ -807,6 +811,12 @@ class SequenceGroup:
     def set_finished_time(self, time: Optional[float]) -> None:
         """Sets the finished time for Request level timings."""
         self.metrics.finished_time = time
+    
+    def set_suffix_computed_block_locs(self, suffix_computed_block_locs: Optional[List[int]]) -> None:
+        self.metrics.suffix_computed_block_locs = suffix_computed_block_locs
+    
+    def set_first_compute_start(self, first_compute_start: Optional[int]) -> None:
+        self.metrics.first_compute_start = first_compute_start
 
     def get_max_num_running_seqs(self) -> int:
         """The maximum number of sequences running in parallel in the remaining

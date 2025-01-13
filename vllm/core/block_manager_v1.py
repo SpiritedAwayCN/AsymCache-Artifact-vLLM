@@ -494,7 +494,8 @@ class BlockSpaceManagerV1(BlockSpaceManager):
     def _allocate_sequence(self, \
                            seq: Optional[Sequence], \
                            ref_count: int, \
-                           is_encoder_decoder: bool = True) -> BlockTable:
+                           is_encoder_decoder: bool = True, \
+                           seq_group: Optional[SequenceGroup] = None) -> BlockTable:
         # Allocate new physical token blocks that will store the prompt tokens.
         num_prompt_blocks = self._get_seq_num_required_blocks(seq)
 
@@ -568,6 +569,9 @@ class BlockSpaceManagerV1(BlockSpaceManager):
                     f"suffix_computed_block_locs: {seq.suffix_computed_block_locs}, "
                     f"first_compute_start: {fitst_compute_start * self.block_size}")
 
+        seq_group.set_suffix_computed_block_locs(seq.suffix_computed_block_locs)
+        seq_group.set_first_compute_start(fitst_compute_start)
+
         return block_table
 
     def allocate(self, seq_group: SequenceGroup) -> None:
@@ -583,7 +587,8 @@ class BlockSpaceManagerV1(BlockSpaceManager):
         block_table: BlockTable = \
             self._allocate_sequence(seq,
                                     seq_group.num_seqs(),
-                                    is_encoder_decoder)
+                                    is_encoder_decoder,
+                                    seq_group)
 
         # Assign the self-attention block tables for each sequence.
         if len(wait_seqs) == 1:
