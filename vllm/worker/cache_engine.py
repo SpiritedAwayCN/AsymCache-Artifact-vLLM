@@ -98,6 +98,14 @@ class CacheEngine:
             self.attn_backend.swap_blocks(self.gpu_cache[i], self.cpu_cache[i],
                                           src_to_dst)
 
+    def offload(self, src_to_dst: torch.Tensor) -> None:
+        for row in src_to_dst:
+            if row[2] == 1:
+                # swap_out
+                self.swap_out(row.unsqueeze(0))
+            else:
+                self.swap_in(row.unsqueeze(0))
+
     def copy(self, src_to_dsts: torch.Tensor) -> None:
         self.attn_backend.copy_blocks(self.gpu_cache, src_to_dsts)
 

@@ -41,10 +41,10 @@ async def handle_request():
 
         # Launch prefill and decode tasks
         prefill_task = asyncio.create_task(
-            forward_request(f'http://{vllm_host_ip}:{vllm_port_prefill}/v1/completions', prefill_request)
+            forward_request(f'http://162.105.146.216:{vllm_port_prefill}/v1/completions', prefill_request)
         )
         decode_task = asyncio.create_task(
-            forward_request(f'http://{vllm_host_ip}:{vllm_port_decode}/v1/completions', original_request_data)
+            forward_request(f'http://162.105.146.216:{vllm_port_decode}/v1/completions', original_request_data)
         )
 
         # Wait for both tasks to complete
@@ -57,8 +57,8 @@ async def handle_request():
         }
 
         # Return the decode result
-        # response = await make_response(combined_result)
-        response = await make_response(decode_result)
+        response = await make_response(combined_result)
+        # response = await make_response(decode_result)
         response.timeout = None
         return response
 
@@ -69,7 +69,7 @@ async def handle_request():
 
 
 if __name__ == '__main__':
-    app.run(port=8000)
+    app.run(host="0.0.0.0", port=8000)
 
 
 

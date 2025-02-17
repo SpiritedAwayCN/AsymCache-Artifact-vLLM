@@ -132,6 +132,7 @@ class WorkerInput:
     blocks_to_swap_in: Optional[torch.Tensor] = None
     blocks_to_swap_out: Optional[torch.Tensor] = None
     blocks_to_copy: Optional[torch.Tensor] = None
+    blocks_to_offload: Optional[torch.Tensor] = None
     virtual_engine: int = 0
     num_steps: int = 1
 
@@ -149,6 +150,7 @@ class WorkerInput:
             blocks_to_swap_in=tensor_dict.pop("blocks_to_swap_in"),
             blocks_to_swap_out=tensor_dict.pop("blocks_to_swap_out"),
             blocks_to_copy=tensor_dict.pop("blocks_to_copy"),
+            blocks_to_offload=tensor_dict.pop("blocks_to_offload"),
             virtual_engine=tensor_dict["virtual_engine"],
             num_steps=tensor_dict.pop("num_steps"),
         )
@@ -163,6 +165,7 @@ class WorkerInput:
             "blocks_to_swap_in": self.blocks_to_swap_in,
             "blocks_to_swap_out": self.blocks_to_swap_out,
             "blocks_to_copy": self.blocks_to_copy,
+            "blocks_to_offload": self.blocks_to_offload,
             "virtual_engine": self.virtual_engine,
             "num_steps": self.num_steps,
         }

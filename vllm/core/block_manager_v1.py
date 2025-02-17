@@ -181,9 +181,24 @@ class CachedBlockAllocator(BlockAllocatorBase):
             raise ValueError(f"We do not expect this error to be triggered in our mind")
     
     def allocate_block(self, block_hash: int,
-                       num_hashed_tokens: int) -> PhysicalTokenBlock:
+                       num_hashed_tokens: int,
+                       block_manager: Optional[BlockSpaceManager] = None) -> PhysicalTokenBlock:
         if self.current_num_blocks == self.num_blocks:
             block = self.evictor.evict()
+            if block_manager is not None:
+                # try to offload to cpu if in gpu allocator
+                if block_manager.cpu_allocator.contains_block(block.block_hash) \
+                    or block_manager.cpu_allocator.get_num_free_blocks() == 0:
+                    # evict
+                    pass
+                else:
+                    # offload block to cpu
+                    cpu_block = block_manager.cpu_allocator.allocate(
+                        block.block_hash, block.block_number)
+                    # True = swap_out
+                    block_manager.offload_swap.append((block.block_number, cpu_block.block_number, True))
+                    block_manager.cpu_allocator.free(cpu_block)
+
             block.block_hash = block_hash
             block.num_hashed_tokens = num_hashed_tokens
             return block
@@ -198,7 +213,8 @@ class CachedBlockAllocator(BlockAllocatorBase):
     def allocate(self,
                  block_hash: Optional[int] = None,
                  num_hashed_tokens: int = 0,
-                 force_ignore_cache: bool = False) -> PhysicalTokenBlock:
+                 force_ignore_cache: bool = False,
+                 block_manager: Optional[BlockSpaceManager] = None) -> PhysicalTokenBlock:
         global _tmp_x, _tmp_y
         fake_hash : bool = False
         if block_hash is None:
@@ -240,7 +256,7 @@ class CachedBlockAllocator(BlockAllocatorBase):
         else:
             self.cache_metric_data.query(hit=False)
             self.cached_blocks[block_hash] = self.allocate_block(
-                block_hash, num_hashed_tokens)
+                block_hash, num_hashed_tokens, block_manager)
             # transmit the hashes to Prefill to query the cache
             # DECODE ONLY!!!
             if IS_KV_CONSUMER and not fake_hash :
@@ -439,6 +455,8 @@ class BlockSpaceManagerV1(BlockSpaceManager):
 
         self.test_ignore_cache_block_num_2: int = 0
         self.test_ignore_cache_block_start_2: int = 0
+
+        self.offload_swap: List[Tuple[int, int, bool]] = []
         
         # if enable_seq_refactor:
         #     logger.info("Sequence Refactor is enabled.")
@@ -503,29 +521,49 @@ class BlockSpaceManagerV1(BlockSpaceManager):
         assert seq is not None
         
         segment_status, fitst_compute_start = 0, 0
+        hit_in_cpu = False
+
         for logical_idx in range(num_prompt_blocks):
+            hit_in_cpu = False
             if (self.block_sliding_window is not None
                     and logical_idx >= self.block_sliding_window):
                 block = block_table[logical_idx % self.block_sliding_window]
                 # Set the reference counts of the token blocks.
                 block.ref_count = ref_count
             elif not is_encoder_decoder and self.enable_caching:
-                block = self.gpu_allocator.allocate(
-                    seq.hash_of_block(logical_idx),
-                    seq.num_hashed_tokens_of_block(logical_idx),
-                    0 < logical_idx - self.test_ignore_cache_block_start <= self.test_ignore_cache_block_num
-                    or 0 < logical_idx - self.test_ignore_cache_block_start_2 <= self.test_ignore_cache_block_num_2)
+                block_hash = seq.hash_of_block(logical_idx)
+                num_hashed_tokens = seq.num_hashed_tokens_of_block(logical_idx)
+                ignore = 0 < logical_idx - self.test_ignore_cache_block_start <= self.test_ignore_cache_block_num \
+                    or 0 < logical_idx - self.test_ignore_cache_block_start_2 <= self.test_ignore_cache_block_num_2
+                cpu_block = None
+
+                if ignore or self.gpu_allocator.contains_block(block_hash):
+                    pass
+                else:
+                    if block_hash in self.cpu_allocator.cached_blocks:
+                        hit_in_cpu = True
+                        cpu_block = self.cpu_allocator.cached_blocks[block_hash]
+                    elif block_hash in self.cpu_allocator.evictor:
+                        hit_in_cpu = True
+                        cpu_block = self.cpu_allocator.evictor.remove(block_hash)
+
+                block = self.gpu_allocator.allocate(block_hash, num_hashed_tokens, ignore, block_manager=self)
+                if cpu_block is not None:
+                    # swap in cached block
+                    self.offload_swap.append((cpu_block.block_number, block.block_number, False))
+                    self.cpu_allocator.evictor.add(cpu_block)
+                    logger.info(f"hit in cpu..logical_idx{logical_idx}")
                 # if self.seq_refactor:
                 #     self.refseq_tracker.add(block.block_hash, seq)
             else:
-                block = self.gpu_allocator.allocate()
+                block = self.gpu_allocator.allocate(block_manager=self)
                 # Set the reference counts of the token blocks.
                 block.ref_count = ref_count
                 # if self.seq_refactor:
                 #     self.refseq_tracker.add(block.block_hash, seq)
             
             
-            if block.computed:
+            if block.computed or hit_in_cpu:
                 if segment_status == 1:
                     # multiple of 64
                     segment_status += 1
@@ -574,7 +612,9 @@ class BlockSpaceManagerV1(BlockSpaceManager):
 
         return block_table
 
-    def allocate(self, seq_group: SequenceGroup) -> None:
+    def allocate(self, seq_group: SequenceGroup, blocks_to_offload: List[Tuple[int, int, bool]]) -> None:
+        self.offload_swap = blocks_to_offload
+
         is_encoder_decoder = seq_group.is_encoder_decoder()
         check_no_caching_or_swa_for_blockmgr_encdec(self, seq_group)
 
@@ -682,7 +722,7 @@ class BlockSpaceManagerV1(BlockSpaceManager):
         # num_hashed_tokens is used to compute future hashes
         # (e.g. in the hashing function, it is used to ask the sequence for
         # prefix tokens)
-        new_block = self.gpu_allocator.allocate(block_hash, num_hashed_tokens)
+        new_block = self.gpu_allocator.allocate(block_hash, num_hashed_tokens, block_manager=self)
         # if self.seq_refactor:
         #     self.refseq_tracker.add(new_block.block_number, seq)
 
@@ -696,8 +736,11 @@ class BlockSpaceManagerV1(BlockSpaceManager):
         self,
         seq: Sequence,
         num_lookahead_slots: int = 0,
+        blocks_to_offload: List[Tuple[int, int, bool]] = None,
     ) -> List[Tuple[int, int]]:
         """Allocate a physical slot for a new token."""
+        self.offload_swap = blocks_to_offload
+
         n_blocks = seq.n_blocks
         block_table = self.block_tables[seq.seq_id]
         # If we need to allocate a new physical block
@@ -847,7 +890,7 @@ class BlockSpaceManagerV1(BlockSpaceManager):
                                        self.gpu_allocator,
                                        mapping)
 
-        return [(cpu_block.block_number, gpu_block.block_number)
+        return [(cpu_block.block_number, gpu_block.block_number, False)
                 for cpu_block, gpu_block in mapping.items()]
 
     def can_swap_out(self, seq_group: SequenceGroup) -> bool:
@@ -873,7 +916,7 @@ class BlockSpaceManagerV1(BlockSpaceManager):
                                        self.cpu_allocator,
                                        mapping)
 
-        return [(cpu_block.block_number, gpu_block.block_number)
+        return [(cpu_block.block_number, gpu_block.block_number, True)
                 for cpu_block, gpu_block in mapping.items()]
 
     def _free_block_table(self, block_table: BlockTable) -> None:

@@ -307,6 +307,9 @@ class Worker(LocalOrDistributedWorkerBase):
         blocks_to_swap_out = torch.tensor(execute_model_req.blocks_to_swap_out,
                                           device="cpu",
                                           dtype=torch.int64).view(-1, 2)
+        blocks_to_offload = torch.tensor(execute_model_req.blocks_to_offload,
+                                         device="cpu",
+                                         dtype=torch.int64).view(-1, 3)
         # `blocks_to_copy` is a gpu tensor. The src and tgt of
         # blocks to copy are in the same device, and `blocks_to_copy`
         # can be used directly within cuda kernels.
@@ -319,6 +322,7 @@ class Worker(LocalOrDistributedWorkerBase):
             blocks_to_swap_in=blocks_to_swap_in,
             blocks_to_swap_out=blocks_to_swap_out,
             blocks_to_copy=blocks_to_copy,
+            blocks_to_offload=blocks_to_offload,
             virtual_engine=virtual_engine,
             num_steps=num_steps,
         )
@@ -327,14 +331,18 @@ class Worker(LocalOrDistributedWorkerBase):
     def execute_worker(self, worker_input: WorkerInput) -> None:
         virtual_engine = worker_input.virtual_engine
         # Issue cache operations.
-        if (worker_input.blocks_to_swap_in is not None
-                and worker_input.blocks_to_swap_in.numel() > 0):
-            self.cache_engine[virtual_engine].swap_in(
-                worker_input.blocks_to_swap_in)
-        if (worker_input.blocks_to_swap_out is not None
-                and worker_input.blocks_to_swap_out.numel() > 0):
-            self.cache_engine[virtual_engine].swap_out(
-                worker_input.blocks_to_swap_out)
+        if (worker_input.blocks_to_offload is not None
+                and worker_input.blocks_to_offload.numel() > 0):
+            self.cache_engine[virtual_engine].offload(
+                worker_input.blocks_to_offload)
+        # if (worker_input.blocks_to_swap_in is not None
+        #         and worker_input.blocks_to_swap_in.numel() > 0):
+        #     self.cache_engine[virtual_engine].swap_in(
+        #         worker_input.blocks_to_swap_in)
+        # if (worker_input.blocks_to_swap_out is not None
+        #         and worker_input.blocks_to_swap_out.numel() > 0):
+        #     self.cache_engine[virtual_engine].swap_out(
+        #         worker_input.blocks_to_swap_out)
         if (worker_input.blocks_to_copy is not None
                 and worker_input.blocks_to_copy.numel() > 0):
             self.cache_engine[virtual_engine].copy(worker_input.blocks_to_copy)

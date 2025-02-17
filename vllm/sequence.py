@@ -1335,6 +1335,9 @@ class ExecuteModelRequest(
                                    int]] = msgspec.field(default_factory=list)
     # Blocks to copy. Source to dest block.
     blocks_to_copy: List[Tuple[int, int]] = msgspec.field(default_factory=list)
+    # Blocks to offload swap
+    blocks_to_offload: List[Tuple[int, int, bool]] = msgspec.field(default_factory=list)
+
     # Virtual engine ID for pipeline parallel.
     virtual_engine: int = 0
     # The number of slots for lookahead decoding.
@@ -1389,6 +1392,7 @@ class ExecuteModelRequest(
             blocks_to_swap_in=self.blocks_to_swap_in.copy(),
             blocks_to_swap_out=self.blocks_to_swap_out.copy(),
             blocks_to_copy=self.blocks_to_copy.copy(),
+            blocks_to_offload=self.blocks_to_offload.copy(),
             virtual_engine=self.virtual_engine,
             num_lookahead_slots=self.num_lookahead_slots,
             running_queue_size=self.running_queue_size,

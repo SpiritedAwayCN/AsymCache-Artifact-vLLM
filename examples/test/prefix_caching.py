@@ -36,6 +36,39 @@ LONG_PROMPT = "You are a helpful assistant in recognizes the content of tables i
 | 28  | Zack Blue     | 30  | Lawyer        | Australia     | zack.b@example.com     | 555-3436       | 135 Birch St, Adelaide, SA   |
 | 29  | Amy White     | 33  | Musician      | New Zealand   | amy.w@example.com      | 555-5658       | 159 Maple St, Wellington, NZ |
 """
+LONG_PROMPT_2 = "You are a helpful assistant in recognizes the content of tables in markdown format. Here is a table as follows.\n# Table\n" + """
+| ID  | Name             | Age | Occupation       | Country        | Email                   | Phone Number    | Address                        |
+|-----|------------------|-----|------------------|----------------|-------------------------|-----------------|-------------------------------|
+| 1   | Alice Walker     | 32  | Architect        | USA            | alice.walker@example.com | 555-2345        | 321 Oak St, Miami, FL         |
+| 2   | Michael Johnson   | 45  | Pilot            | Canada         | michael.j@example.com    | 555-6789        | 654 Maple St, Ottawa, ON      |
+| 3   | Sarah Connor     | 29  | Designer         | UK             | sarah.c@example.com      | 555-8765        | 987 Elm St, London, UK        |
+| 4   | David Brown      | 38  | Photographer     | Australia      | david.b@example.com      | 555-5432        | 123 Birch St, Sydney, NSW     |
+| 5   | Emma Watson      | 26  | Biologist        | New Zealand    | emma.w@example.com       | 555-7890        | 456 Pine St, Wellington, NZ   |
+| 6   | Liam Neeson      | 31  | Chef             | Ireland        | liam.n@example.com       | 555-3456        | 789 Cedar St, Dublin, IE      |
+| 7   | Olivia Green     | 37  | Writer           | USA            | olivia.g@example.com     | 555-1112        | 246 Willow St, New York, NY   |
+| 8   | Emma Stone       | 40  | Music Producer    | Canada         | emma.s@example.com       | 555-2223        | 135 Maple St, Toronto, ON     |
+| 9   | Kevin Spacey     | 48  | Engineer         | UK             | kevin.s@example.com      | 555-3334        | 864 Fir St, Manchester, UK    |
+| 10  | Rachel Adams     | 35  | Artist           | Australia      | rachel.a@example.com     | 555-4445        | 753 Willow St, Melbourne, VIC  |
+| 11  | Ethan Hunt       | 27  | Scientist        | New Zealand    | ethan.h@example.com      | 555-5556        | 912 Elm St, Auckland, NZ      |
+| 12  | Natalie Portman  | 39  | Teacher          | Ireland        | natalie.p@example.com    | 555-6667        | 159 Oak St, Cork, IE          |
+| 13  | Samuel L. Jackson| 41  | Lawyer           | USA            | samuel.j@example.com     | 555-7778        | 357 Cedar St, Boston, MA      |
+| 14  | Chris Evans      | 34  | Chef             | Canada         | chris.e@example.com      | 555-8889        | 246 Elm St, Calgary, AB       |
+| 15  | Scarlett Johansson| 30  | Musician         | UK             | scarlett.j@example.com   | 555-9990        | 975 Pine St, Edinburgh, UK    |
+| 16  | Tom Hanks        | 28  | Doctor           | Australia      | tom.h@example.com        | 555-0001        | 864 Birch St, Brisbane, QLD   |
+| 17  | Anne Hathaway    | 35  | Engineer         | New Zealand    | anne.h@example.com       | 555-1213        | 753 Maple St, Hamilton, NZ    |
+| 18  | Will Smith       | 42  | Artist           | Ireland        | will.s@example.com       | 555-3435        | 912 Fir St, Limerick, IE      |
+| 19  | Zoe Saldana      | 29  | Scientist        | USA            | zoe.s@example.com        | 555-5657        | 159 Willow St, Seattle, WA    |
+| 20  | Chris Hemsworth  | 31  | Teacher          | Canada         | chris.h@example.com      | 555-7878        | 357 Poplar St, Ottawa, ON     |
+| 21  | Robert Downey Jr.| 44  | Lawyer           | UK             | robert.d@example.com     | 555-9090        | 753 Elm St, Birmingham, UK    |
+| 22  | Jennifer Lawrence | 36  | Musician         | Australia      | jennifer.l@example.com   | 555-1213        | 864 Cedar St, Perth, WA       |
+| 23  | Denzel Washington | 39  | Chef             | New Zealand    | denzel.w@example.com     | 555-3436        | 975 Spruce St, Christchurch, NZ|
+| 24  | Hugh Jackman     | 43  | Engineer         | Ireland        | hugh.j@example.com       | 555-5658        | 246 Willow St, Galway, IE     |
+| 25  | Natalie Dormer   | 27  | Artist           | USA            | natalie.d@example.com    | 555-7879        | 135 Elm St, Denver, CO        |
+| 26  | Benedict Cumberbatch | 34 | Scientist     | Canada         | benedict.c@example.com   | 555-9091        | 357 Oak St, Montreal, QC      |
+| 27  | Emilia Clarke     | 41  | Teacher         | UK             | emilia.c@example.com     | 555-1214        | 975 Pine St, Leeds, UK        |
+| 28  | Jason Momoa       | 30  | Lawyer          | Australia      | jason.m@example.com      | 555-3436        | 135 Birch St, Adelaide, SA    |
+| 29  | Gal Gadot        | 33  | Musician         | New Zealand    | gal.g@example.com        | 555-5658        | 159 Maple St, Wellington, NZ  |
+"""
 
 last_line1 = """| 30  | Ben Black     | 38  | Chef          | Ireland       | ben.b@example.com      | 555-7870       | 246 Fir St, Waterford, IE    |
 """
@@ -68,7 +101,9 @@ llm = LLM(
     disable_log_stats=False,
     enforce_eager=False,
     enable_chunked_prefill=False,
-    max_model_len=10000,
+    # max_model_len=10000,
+    num_gpu_blocks_override=24,
+    max_model_len=24*64,
     # max_model_len=211008,
     block_size=64,
 )
@@ -87,7 +122,7 @@ questions = [
     "Question: what is the age of John Doe? Your answer: The age of John Doe is ",
     "Question: what is the age of Zack Blue? Your answer: The age of Zack Blue is ",
 ]
-
+# gpu_block=24
 # Querying the age of John Doe
 get_generation_time(
     llm,
@@ -95,6 +130,11 @@ get_generation_time(
     LONG_PROMPT + last_line1 + questions[0],
 )
 
+get_generation_time(
+    llm,
+    sampling_params,
+    LONG_PROMPT_2 + last_line1 + questions[0],
+)
 # Querying the age of Zack Blue
 # This query will be faster since vllm avoids computing the KV cache of LONG_PROMPT again.
 get_generation_time(
