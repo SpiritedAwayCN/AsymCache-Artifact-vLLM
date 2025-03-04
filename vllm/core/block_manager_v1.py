@@ -157,7 +157,8 @@ class CachedBlockAllocator(BlockAllocatorBase):
                 block.used_by_decode = True
         if block is not None:
             # logger.debug(f"return block number: {block.block_number}")
-            assert block.computed
+
+            # assert block.computed
             assert block.used_by_decode
             return block.block_number
         # logger.debug(f"not found in cache or buffer: {block_hash}")

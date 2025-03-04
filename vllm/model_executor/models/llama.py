@@ -55,6 +55,7 @@ from .interfaces import SupportsLoRA, SupportsPP
 from .utils import (AutoWeightsLoader, PPMissingLayer, is_pp_missing_parameter,
                     make_empty_intermediate_tensors_factory, make_layers)
 
+from vllm.worker.CacheGuardLayerState import CacheGuardLayerState
 
 class LlamaMLP(nn.Module):
 
@@ -331,6 +332,7 @@ class LlamaModel(nn.Module):
         attn_metadata: AttentionMetadata,
         intermediate_tensors: Optional[IntermediateTensors],
         inputs_embeds: Optional[torch.Tensor] = None,
+        guard_layer_state: Optional[CacheGuardLayerState] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
         if get_pp_group().is_first_rank:
             if inputs_embeds is not None:
@@ -343,12 +345,15 @@ class LlamaModel(nn.Module):
             hidden_states = intermediate_tensors["hidden_states"]
             residual = intermediate_tensors["residual"]
 
+        if guard_layer_state is not None:
+            guard_layer_state.computed_layer = -1
         for i in range(self.start_layer, self.end_layer):
             layer = self.layers[i]
             hidden_states, residual = layer(positions, hidden_states,
                                             kv_caches[i - self.start_layer],
                                             attn_metadata, residual)
-
+            if guard_layer_state is not None:
+                guard_layer_state.computed_layer = i
         if not get_pp_group().is_last_rank:
             return IntermediateTensors({
                 "hidden_states": hidden_states,
@@ -555,9 +560,11 @@ class LlamaForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
         kv_caches: List[torch.Tensor],
         attn_metadata: AttentionMetadata,
         intermediate_tensors: Optional[IntermediateTensors] = None,
+        guard_layer_state: Optional[CacheGuardLayerState] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
         model_output = self.model(input_ids, positions, kv_caches,
-                                  attn_metadata, intermediate_tensors)
+                                  attn_metadata, intermediate_tensors,
+                                  guard_layer_state=guard_layer_state)
         return model_output
 
     def compute_logits(

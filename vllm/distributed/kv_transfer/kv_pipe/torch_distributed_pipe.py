@@ -133,7 +133,9 @@ class TorchDistributedPipe(KVPipeBase):
         buffer[1] = len(tensor.shape)
         buffer[2:2 + ndims] = torch.tensor(tensor.shape,
                                            dtype=self.METADATA_DTYPE)
-        return buffer.to(self.device)
+        logger.debug(f"_make_metadata_torch.empty {self.device}")
+        return buffer
+        # return buffer.to(self.device)
 
     def _prepare_recv_buffer(self,
                              d_metadata_buffer: torch.Tensor) -> torch.Tensor:
@@ -268,6 +270,40 @@ class TorchDistributedPipe(KVPipeBase):
             tensor,
         )
 
+    def send_tensor_wrapper_with_signal_pipe(self, tensor: Optional[torch.Tensor], signal_pipe: KVPipeBase) -> None:
+        tensor_size = tensor.element_size() * tensor.numel()
+        logger.debug("start send_tensor_wrapper with signal")
+        metadata = self._make_metadata(tensor)
+        logger.debug(f"Sending metadata with signal pipe")
+        signal_pipe.send_tensor(metadata)
+        logger.debug("Metadata sent with signal pipe")
+        torch.distributed.send(tensor.to(self.device),
+                               dst=self.target_rank_for_send,
+                               group=self.device_group)
+        logger.debug("sent with signal pipe")
+        with self.buffer_size_lock:
+            self.buffer_size = self.buffer_size - tensor_size
+
+    def send_tensor_with_signal_pipe(self, tensor: Optional[torch.Tensor], signal_pipe: KVPipeBase) -> None:
+        if self.transport_thread is None:
+            self.transport_thread = ThreadPoolExecutor(max_workers=1)
+        if tensor is None:
+            tensor = self.none_tensor
+        tensor_size = tensor.element_size() * tensor.numel()
+        assert (
+            0 < len(tensor.shape) < self.MAX_TENSOR_DIMENSIONS
+        ), f"Only support dimensions within 1-{self.MAX_TENSOR_DIMENSIONS}"
+        self.block_if_full()
+        logger.debug(f"prefill buffer_size_lock")
+        with self.buffer_size_lock:
+            self.buffer_size = self.buffer_size + tensor_size
+        logger.debug(f"prefill buffer_size_lock with signal send")
+        self.transport_thread.submit(
+            self.send_tensor_wrapper_with_signal_pipe,
+            tensor,
+            signal_pipe,
+        )
+
     def recv_tensor(self) -> Optional[torch.Tensor]:
         """Receives a tensor from the src rank. Blocking."""
         if self.transport_thread is None:
@@ -284,6 +320,28 @@ class TorchDistributedPipe(KVPipeBase):
             # fault tolerance: if the pipe is broken, return None
             return None
 
+        if tensor.numel() == 1 and tensor.item() == NONE_INT:
+            return None
+        else:
+            return tensor
+
+    def recv_tensor_wrapper_with_signal_pipe(self, signal_pipe: KVPipeBase) -> torch.Tensor:
+        logger.debug("Receiving metadata with signal_pipe")
+        d_metadata = signal_pipe.recv_tensor()
+        logger.debug(f"Received metadata with signal_pipe:{d_metadata}")
+        buffer = self._prepare_recv_buffer(d_metadata)
+        logger.debug("with signal, ready to receive tensor")
+        torch.distributed.recv(buffer,
+                               src=self.target_rank_for_recv,
+                               group=self.device_group)
+        logger.debug("Received tensor in impl with signal")
+        return buffer
+
+    def recv_tensor_with_signal_pipe(self, signal_pipe: KVPipeBase) -> Optional[torch.Tensor]:
+        if self.transport_thread is None:
+            self.transport_thread = ThreadPoolExecutor(max_workers=1)
+        future = self.transport_thread.submit(self.recv_tensor_wrapper_with_signal_pipe, signal_pipe)
+        tensor = future.result()
         if tensor.numel() == 1 and tensor.item() == NONE_INT:
             return None
         else:

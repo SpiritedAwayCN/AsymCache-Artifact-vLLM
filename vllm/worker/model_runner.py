@@ -62,6 +62,7 @@ from vllm.core.block_manager_v2 import BlockSpaceManagerV2
 if TYPE_CHECKING:
     from vllm.attention.backends.abstract import AttentionBackend
 from vllm.worker.CacheGuardThread import CacheGuardThread
+from vllm.worker.CacheGuardLayerState import CacheGuardLayerState
 logger = init_logger(__name__)
 
 LORA_WARMUP_RANK = 8
@@ -1102,7 +1103,7 @@ class GPUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
         self.max_batchsize_to_capture = _get_max_graph_batch_size(
             self.scheduler_config.max_num_seqs)
         
-        
+        self.guard_layer_state = None
         self.guard_thread = None
         # self.cache_guard_thread = CacheGuardThread(
         self.graph_runners: List[Dict[int, CUDAGraphRunner]] = [
@@ -1177,8 +1178,9 @@ class GPUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
         assert dist_kv.IS_KV_PRODUCER
         kv_transfer_agent = get_disagg_group()
         # check kv transfer agent type
-        assert isinstance(kv_transfer_agent, dist_kv.KV_transfer_agent)
-        self.guard_thread = CacheGuardThread(kv_transfer_agent, get_block_manager= self.block_manager, model_executable = self.model, kv_caches= kv_cache)
+        assert isinstance(kv_transfer_agent, dist_kv.KV_transfer_agent)            
+        self.guard_layer_state = CacheGuardLayerState()
+        self.guard_thread = CacheGuardThread(kv_transfer_agent, get_block_manager= self.block_manager, model_executable = self.model, kv_caches= kv_cache, guard_layer_state = self.guard_layer_state)
         self.guard_thread.start()
         
     def shutdown(self): 
@@ -1829,6 +1831,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                 kv_caches=kv_caches,
                 attn_metadata=model_input.attn_metadata,
                 intermediate_tensors=intermediate_tensors,
+                guard_layer_state=self.guard_layer_state,
                 **MultiModalInputs.as_kwargs(multi_modal_kwargs,
                                                 device=self.device),
                 **seqlen_agnostic_kwargs)
