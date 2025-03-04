@@ -25,7 +25,7 @@ from vllm.config import (CacheConfig, DeviceConfig, LoadConfig, LoRAConfig,
                          ModelConfig, ObservabilityConfig, ParallelConfig,
                          PromptAdapterConfig, SchedulerConfig)
 from vllm.core.scheduler import SchedulerOutputs
-from vllm.distributed import get_disagg_group, get_pp_group
+from vllm.distributed import get_disagg_group, get_pp_group, get_tp_group
 from vllm.distributed.parallel_state import graph_capture
 from vllm.forward_context import set_forward_context
 from vllm.inputs import INPUT_REGISTRY, InputRegistry
@@ -1180,7 +1180,12 @@ class GPUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
         # check kv transfer agent type
         assert isinstance(kv_transfer_agent, dist_kv.KV_transfer_agent)            
         self.guard_layer_state = CacheGuardLayerState()
-        self.guard_thread = CacheGuardThread(kv_transfer_agent, get_block_manager= self.block_manager, model_executable = self.model, kv_caches= kv_cache, guard_layer_state = self.guard_layer_state)
+        self.guard_thread = CacheGuardThread(kv_transfer_agent, 
+                                             get_block_manager=self.block_manager, 
+                                             model_executable=self.model, 
+                                             kv_caches=kv_cache,
+                                             is_driver=self.is_driver_worker,
+                                             guard_layer_state = self.guard_layer_state,)
         self.guard_thread.start()
         
     def shutdown(self): 
@@ -1747,14 +1752,11 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         intermediate_tensors: Optional[IntermediateTensors] = None,
         num_steps: int = 1,
         block_manager: Optional[Union[BlockSpaceManagerV1, BlockSpaceManagerV2]] = None
-    ) -> Optional[Union[List[SamplerOutput], IntermediateTensors]]:
-        
-        if self.block_manager is None and block_manager is not None:
-            # assert block_manager is not None, "block_manager is None, Error in initialize block manager"
-            self.block_manager = block_manager
-            logger.debug("block manager initialized")
-            if self.guard_thread is None and self.need_send_kv(model_input, kv_caches):
-                self.launch_guarding_thread(kv_caches)
+    ) -> Optional[Union[List[SamplerOutput], IntermediateTensors]]:        
+        self.block_manager = block_manager
+        logger.debug(f"rank {torch.distributed.get_rank()} execute model {self.block_manager} {block_manager}")
+        if self.guard_thread is None and self.need_send_kv(model_input, kv_caches):
+            self.launch_guarding_thread(kv_caches)
 
         if num_steps > 1:
             raise ValueError("num_steps > 1 is not supported in ModelRunner")
@@ -1802,15 +1804,22 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         # NOTE: The receive operation is blocking
         # bypass_model_exec = False
         if self.need_recv_kv(model_input, kv_caches):
+            # print(f"rank {torch.distributed.get_rank()} receiving kv", flush=True)
             logger.debug("receiving kv")
-            query_hash_list = self.block_manager.get_new_block_hash()
-            logger.debug(f"hash_list: {query_hash_list}")
+            if self.is_driver_worker:
+                query_hash_list = self.block_manager.get_new_block_hash()
+                logger.debug(f"hash_list: {query_hash_list}")
+                get_disagg_group().send_hash(query_hash_list, model_input, block_manager.block_size)
+            else:
+                get_disagg_group().send_hash_dummy()
             # get_scheduled_seqids(model_input)
-            get_disagg_group().send_hash(query_hash_list, model_input, block_manager.block_size)
+            
             get_disagg_group().direct_recv_kv_caches(
                 model_executable,
                 kv_caches,
                 self.block_manager,
+                self.is_driver_worker,
+                get_tp_group(),
                 )
 
         multi_modal_kwargs = model_input.multi_modal_kwargs or {}
@@ -1944,7 +1953,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         is_prefill_run = prefill_meta is not None
 
         return dist_kv.IS_KV_CONSUMER and (
-            not is_profile_run) and is_prefill_run and self.block_manager is not None
+            not is_profile_run) and is_prefill_run
 
     def need_send_kv(self, model_input, kv_caches) -> bool:
         """Check if we need to send kv-cache to the other worker.

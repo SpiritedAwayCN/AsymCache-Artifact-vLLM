@@ -19,7 +19,7 @@ class BufferedEvictor:
         assert block.used_by_decode == False
         self.buffer[block.block_hash] = block
 
-    def pop(self, block_hash: int) -> PhysicalTokenBlock:
+    def pop(self, block_hash: int, to_evict: bool = True) -> PhysicalTokenBlock:
         """
         Removes the block with the given hash from the buffer
         and places it into the evictor.
@@ -31,9 +31,9 @@ class BufferedEvictor:
             # print(f"pop block {block_hash}")
             block = self.buffer.pop(block_hash)
             # print(f"block used by decode: {block.used_by_decode}")
-            assert block is not None
-            block.used_by_decode == True
-            self.evictor.add(block)
+            if to_evict:
+                assert block is not None # and block.used_by_decode
+                self.evictor.add(block)
             return block
 
     def get(self, block_hash: int) -> PhysicalTokenBlock:

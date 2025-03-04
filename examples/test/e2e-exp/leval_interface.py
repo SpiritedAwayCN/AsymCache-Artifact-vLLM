@@ -17,7 +17,7 @@ from transformers import (
 
 BASE_DIR = '/processing_data/infra/sca/dataset/LEval'
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
-API_URL = 'http://localhost:8000/v1/completions'
+API_URL = 'http://localhost:8047/v1/completions'
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--div', '-d', type=int, default=80)
@@ -84,9 +84,9 @@ async def fetch(prompt, answer, output_file):
     async with aiohttp.ClientSession(timeout=AIOHTTP_TIMEOUT) as session:
         payload = {
             "model": model,
-            "prompt": prompt,
+            "prompt": prompt[:2000],
             "std_output_tokens": answer,
-            "max_tokens": 4096,
+            "max_tokens": 8192,
         }
         headers = {
             "Content-Type": "application/json",
@@ -97,6 +97,8 @@ async def fetch(prompt, answer, output_file):
             response_json = await response.json()
             # output_file is a .jsonl file
             output_file.write(json.dumps(response_json) + '\n')
+        
+        output_file.flush()
 
 async def schedule_request(output_file):
     first_time = -1

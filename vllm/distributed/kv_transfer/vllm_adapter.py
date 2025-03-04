@@ -33,6 +33,7 @@ import vllm.envs as envs
 from vllm import _custom_ops as ops
 from vllm.distributed.kv_transfer.kv_lookup_buffer.base import (
     KVLookupBufferBase)
+# from vllm.distributed.parallel_state import GroupCoordinator
 from vllm.distributed.kv_transfer.kv_pipe.torch_distributed_pipe import (
     TorchDistributedPipe)
 from vllm.logger import init_logger
@@ -619,57 +620,33 @@ class KV_transfer_agent:
         self,
         model_executable: torch.nn.Module,
         kv_caches: List[torch.Tensor],
-        query_hashes: List[int],
-        full_hashes: List[int],
-        block_manager: Optional[Union[BlockSpaceManagerV1, BlockSpaceManagerV2]] = None,
+        block_ids: List[int],
+        hash_matches: List[int],
+        is_driver: bool,
         guard_layer_state: Optional[CacheGuardLayerState] = None,
     ) -> None:
-
-        # Function to retrieve block IDs and matching hashes based on query hashes
-        def get_block_ids(query_hashes: List[int], full_hashes: List[int], block_manager: Union[BlockSpaceManagerV1, BlockSpaceManagerV2]) -> Tuple[List[int], List[int]]:
-            blockid_list = []
-            hash_match_list = []
-            logger.debug(f"getting blockids: {query_hashes}")
-            for hash in query_hashes:
-                logger.debug(f"getting blockids:{hash}")
-                block_ids = block_manager.get_hash_block_ids(hash)
-                logger.debug(f"getting blockids after get_hash_block_ids:{hash}")
-                if block_ids:
-                    blockid_list.append(block_ids)
-                    hash_match_list.append(hash)
-            print(f"blockid_list: {blockid_list}")
-            block_manager.gpu_allocator.change_block_used_status(full_hashes, True)
-            block_manager.gpu_allocator.show_evictor_buffer()
-            
-            return blockid_list, hash_match_list
-        logger.debug("direct_send_kv_caches step -1")
-
-        block_ids, hash_matches = get_block_ids(query_hashes, full_hashes, block_manager)
-        
         if len(block_ids) == 0:
             logger.warning("No matching block IDs found. Sending empty tensors.")
-            if self.send_pipe is not None:
+            if self.send_pipe is not None and is_driver:
                 empty_tensor = torch.empty(0, device="cuda")
                 self.send_pipe.send_tensor_with_signal_pipe(empty_tensor, self.send_signal_pipe)
             return
-        logger.debug("direct_send_kv_caches step 0")
-        # generate an on-device tensor from hash_matches
-        hash_matches = torch.tensor(hash_matches, dtype=torch.int64, device="cuda")
+
         start_layer = model_executable.model.start_layer
         end_layer = model_executable.model.end_layer
 
-        # with open("/home/infer/chenyilei/tmp_t/log.txt", "a") as f:
-        #     f.write(f"send hash of block:{hash_matches}\n")
-        logger.debug("direct_send_kv_caches step 1")
-        if self.send_pipe is not None:
+        if self.send_pipe is not None and is_driver:
+            # generate an on-device tensor from hash_matches
+            hash_matches = torch.tensor(hash_matches, dtype=torch.int64, device="cuda")
             self.send_pipe.send_tensor_with_signal_pipe(hash_matches, self.send_signal_pipe)
+        
+        if self.send_pipe is not None:
             if self.block_buffer is None:
                 shape = kv_caches[0].shape # 2, total_blocks, block_size, num_heads, head_dim
                 self.block_buffer = torch.empty((self.block_buffer_size, shape[2], shape[3], shape[4]),
                                                 dtype=kv_caches[0].dtype,
                                                 device=kv_caches[0].device)
             self.block_buffer_num = 0
-        logger.debug("direct_send_kv_caches step 2")
 
         assert guard_layer_state is not None, logger.debug("guard_layer_state is None in direct_send_kv_caches.")
         assert self.send_pipe is not None, logger.debug("send_pipe is None in direct_send_kv_caches.")
@@ -688,45 +665,40 @@ class KV_transfer_agent:
             logger.debug(f"send kv caches, sent_layer : {sent_layer}")
             # time.sleep(0.01)
         self.send_block_buffer_clear()
-        logger.debug("direct_send_kv_caches step 3")
-
-        # # Collect all keys and values at once
-        # all_keys, all_values = [], []
-        
-        # for layer_id in range(start_layer, end_layer):
-        #     kv_cache = kv_caches[layer_id - start_layer]
-
-        #     # KV Cache shape: [2, total_blocks, block_size, num_heads, head_dim]
-        #     key_cache = kv_cache[0]  # Shape: [total_blocks, block_size, num_heads, head_dim]
-        #     value_cache = kv_cache[1]  # Shape: [total_blocks, block_size, num_heads, head_dim]
-
-        #     # Gather keys and values for all blocks
-        #     keys = torch.cat([key_cache[block_id].unsqueeze(0) for block_id in block_ids], dim=0)  # Shape: [num_blocks, block_size, num_heads, head_dim]
-        #     values = torch.cat([value_cache[block_id].unsqueeze(0) for block_id in block_ids], dim=0)  # Shape: [num_blocks, block_size, num_heads, head_dim]
-
-        #     all_keys.append(keys)  # Shape: [num_layers, num_blocks, block_size, num_heads, head_dim]
-        #     all_values.append(values)  # Shape: [num_layers, num_blocks, block_size, num_heads, head_dim]
-
-        # all_keys = torch.stack(all_keys, dim=0)  # Final shape: [num_layers, num_blocks, block_size, num_heads, head_dim]
-        # all_values = torch.stack(all_values, dim=0)  # Final shape: [num_layers, num_blocks, block_size, num_heads, head_dim]
-
-        # if self.send_pipe is not None:
-        #     logger.debug("[rank%d]: KV DIRECT send.", torch.distributed.get_rank())
-        #     # Send all keys, values, and hash_matches at once
-        #     self.send_pipe.send_tensor_list([all_keys, all_values, hash_matches])
 
     def direct_recv_kv_caches(
         self,
         model_executable: torch.nn.Module,
         kv_caches: List[torch.Tensor],
-        block_manager: Union[BlockSpaceManagerV1, BlockSpaceManagerV2]
+        block_manager: Union[BlockSpaceManagerV1, BlockSpaceManagerV2],
+        is_driver: bool,
+        instance_group
     ) -> None:
-        num_tensors = 3  # Expecting keys, values, and hash_matches
-        # received_tensors = self.recv_pipe.receive_tensor_list(num_tensors)
+        if is_driver:
+            # Receive hash_matches tensor
+            hash_matches = self.recv_pipe.recv_tensor_with_signal_pipe(self.recv_signal_pipe)
+            
+            if hash_matches.numel() == 0:
+                logger.warning("No matching hash matches found. Receiving empty tensors.")
+                instance_group.broadcast_tensor_dict({"block_ids": torch.empty(0, dtype=torch.int64, device="cpu")}, src=0)
+                return
+            
+            block_ids = torch.tensor(
+                [block_manager.gpu_allocator.get_block_ids_from_cache(hash_val.item()) for hash_val in hash_matches],
+                dtype=torch.int64,
+                device="cpu"
+            )
+            instance_group.broadcast_tensor_dict({"block_ids": block_ids}, src=0)
+        else:
+            logger.debug("[rank%d]: Waiting broadcast data.", torch.distributed.get_rank())
+            data = instance_group.broadcast_tensor_dict({}, src=0)
+            logger.debug("[rank%d]: Received broadcast data.", torch.distributed.get_rank())
+            block_ids = data["block_ids"]
+            
+            if block_ids.numel() == 0:
+                logger.warning("No matching block IDs found. Receiving empty tensors.")
+                return
 
-        # all_keys, all_values, hash_matches = received_tensors  # Shapes: [num_layers, num_blocks, block_size, num_heads, head_dim]
-        hash_matches = self.recv_pipe.recv_tensor_with_signal_pipe(self.recv_signal_pipe)
-        hash_matches = hash_matches.tolist()
         start_layer = model_executable.model.start_layer
         end_layer = model_executable.model.end_layer
 
@@ -739,20 +711,19 @@ class KV_transfer_agent:
         self.block_buffer_idx = 0
 
         for layer_id in range(start_layer, end_layer):
-            for idx, hash_val in enumerate(hash_matches):
-                # Retrieve block IDs from hash values
-                block_ids = block_manager.gpu_allocator.get_block_ids_from_cache(hash_val)
+            for idx, block_id in enumerate(block_ids):
                 kv_cache = kv_caches[layer_id - start_layer]
 
                 # KV Cache shape: [2, total_blocks, block_size, num_heads, head_dim]
                 key_cache = kv_cache[0]  # Shape: [total_blocks, block_size, num_heads, head_dim]
                 value_cache = kv_cache[1]  # Shape: [total_blocks, block_size, num_heads, head_dim]
 
-                key_cache[block_ids].copy_(self.recv_block_buffer_pop())
-                value_cache[block_ids].copy_(self.recv_block_buffer_pop())
+                key_cache[block_id].copy_(self.recv_block_buffer_pop())
+                value_cache[block_id].copy_(self.recv_block_buffer_pop())
 
-        for idx, hash_val in enumerate(hash_matches):
-            block_manager.gpu_allocator.change_block_status(hash_val, True)
+        if is_driver:
+            for idx, block_id in enumerate(block_ids):
+                block_manager.gpu_allocator.change_block_status(hash_matches[idx].item(), True)
 
     def get_full_hash(
         self,
@@ -763,7 +734,7 @@ class KV_transfer_agent:
         if len(seq_lens) == 0:
             hash_list = [None]
         else:
-            hash_list = []
+            hash_list = set()
         # sending signals to decode
         for idx, slen in enumerate(seq_lens):
             start_pos = sum(seq_lens[:idx])
@@ -779,9 +750,9 @@ class KV_transfer_agent:
                 hash_block_token_ids = hash((tupled_token_ids,0))
                 # make hash as an tensor
                 # seq_id2hash = torch.tensor([seq_id,hash_block_token_ids], dtype=torch.int64, device="cpu")
-                hash_list.append(hash_block_token_ids)
+                hash_list.add(hash_block_token_ids)
         # make hash_list into a tensor
-        hash_list = torch.tensor(hash_list, dtype=torch.int64, device="cpu")
+        hash_list = torch.tensor(list(hash_list), dtype=torch.int64, device="cpu")
         return hash_list
     
     def send_hash(
@@ -795,12 +766,21 @@ class KV_transfer_agent:
         full_hash = self.get_full_hash(model_input, block_size)
         hash_list = torch.tensor(hashes, dtype=torch.int64, device="cpu")
         # for small size data,use cpu pipe
+        # TODO chunan: compress full_hash
         self.send_signal_pipe.send_tensor_list([hash_list,full_hash])
     
     def recv_hash(self):
         hash_block_token_ids_list = self.recv_signal_pipe.receive_tensor_list(2)
         # [1]:hash_list 
         return hash_block_token_ids_list[0].numpy(), hash_block_token_ids_list[1].numpy()
+    
+    def send_hash_dummy(self):
+        # non-driver send dummy signal
+        self.send_signal_pipe.send_tensor_list([torch.tensor([0], dtype=torch.int64, device="cpu")])
+        
+    def recv_hash_dummy(self):
+        # driver receive dummy signal, for synchronization
+        self.recv_signal_pipe.receive_tensor_list(1)
     
     def recv_hash_old(self):
         # try executing receive hash in limited time

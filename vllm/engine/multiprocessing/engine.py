@@ -314,22 +314,27 @@ class MQLLMEngine:
         logger.debug("Exiting MQLLMEngine heartbeat thread")
 
     def _heartbeat(self):
+        interval = time.time() - self._last_alive_time
+        
         # Send unhealthy if engine has already errored
         if self._errored_with is not None:
             self._send_unhealthy(self._errored_with)
 
         # Check for life of the main loop
         elif time.time() - self._last_alive_time > self.last_alive_threshold:
+            logger.debug(f"Engine loop has died, interval: {interval}")
             self._send_unhealthy(RuntimeError("Engine loop has died"))
-
+            
         else:
             # Otherwise- check health of the engine
             # self.engine.check_health() raises on unhealthy
             try:
                 self.engine.check_health()
+                logger.debug(f"Engine is healthy, interval: {interval}")
                 self._send_healthy()
             except Exception as e:
                 self._set_errored(e)
+                logger.debug(f"Engine is unhealthy, interval: {interval}")
                 self._send_unhealthy(e)
 
     def _send_outputs(self, outputs: REQUEST_OUTPUTS_T):

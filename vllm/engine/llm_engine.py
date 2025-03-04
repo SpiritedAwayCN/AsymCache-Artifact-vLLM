@@ -252,7 +252,7 @@ class LLMEngine:
             "num_scheduler_steps=%d, chunked_prefill_enabled=%s "
             "multi_step_stream_outputs=%s, enable_prefix_caching=%s, "
             "use_async_output_proc=%s, use_cached_outputs=%s, "
-            "mm_processor_kwargs=%s)",
+            "mm_processor_kwargs=%s, executor_class=%s)",
             VLLM_VERSION,
             model_config.model,
             speculative_config,
@@ -289,6 +289,7 @@ class LLMEngine:
             model_config.use_async_output_proc,
             use_cached_outputs,
             model_config.mm_processor_kwargs,
+            executor_class,
         )
         # TODO(woosuk): Print more configs in debug mode.
         self.model_config = model_config

@@ -1,6 +1,9 @@
 import enum
+import torch
 from abc import ABC, abstractmethod
 from typing import OrderedDict, Dict
+
+import torch.distributed
 
 from vllm.block import PhysicalTokenBlock, BASE_FREQ
 from vllm.logger import init_logger
@@ -293,7 +296,7 @@ class LFUEvictor(Evictor):
 class WeightEvictor(Evictor):
 
     def __init__(self, base, delta_func):
-        logger.info(f"{self.__class__.__name__} is used, base is {base}.")
+        logger.info(f"[rank {torch.distributed.get_rank()}]  {self.__class__.__name__} is used, base is {base}.")
         # self.delta(len) ---> delta_T
         self.delta = delta_func
         # block_hash ---> (block, weight)
@@ -309,6 +312,7 @@ class WeightEvictor(Evictor):
         sys.path.append(module_directory)
         from c_set import c_set
         self.heap = c_set(base)
+        self._has_evicted = False
 
     def __contains__(self, block_hash: int) -> bool:
         return block_hash in self.free_table
@@ -322,6 +326,9 @@ class WeightEvictor(Evictor):
         evicted_block.computed = False
         evicted_block.total_count = 0
         evicted_block.used_by_decode = False
+        if not self._has_evicted:
+            self._has_evicted = True
+            logger.info(f"First eviction, heap size = {len(self.free_table)}")
         return evicted_block
 
     def add(self, block: PhysicalTokenBlock):

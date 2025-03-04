@@ -193,9 +193,9 @@ class TorchDistributedPipe(KVPipeBase):
         """
 
         metadata = self._make_metadata(tensor)
-        # logger.debug(f"Sending metadata:{metadata}")
+        logger.debug(f"Sending metadata:{metadata}")
         self._send_metadata(metadata)
-        # logger.debug("Metadata sent")
+        logger.debug("Metadata sent")
         torch.distributed.send(tensor.to(self.device),
                                dst=self.target_rank_for_send,
                                group=self.device_group)
@@ -210,15 +210,15 @@ class TorchDistributedPipe(KVPipeBase):
         Returns:
             - buffer: the received tensor, on self.device
         """
-        # logger.debug("Receiving metadata")
+        logger.debug("Receiving metadata")
         d_metadata = self._recv_metadata()
-        # logger.debug(f"Received metadata:{d_metadata}")
+        logger.debug(f"Received metadata:{d_metadata}")
         buffer = self._prepare_recv_buffer(d_metadata)
-        # logger.debug("ready to receive tensor")
+        logger.debug(f"ready to receive tensor, buffer shape:{buffer.shape}")
         torch.distributed.recv(buffer,
                                src=self.target_rank_for_recv,
                                group=self.device_group)
-        # logger.debug("Received tensor in impl")
+        logger.debug("Received tensor in impl")
 
         return buffer
 
@@ -294,10 +294,8 @@ class TorchDistributedPipe(KVPipeBase):
             0 < len(tensor.shape) < self.MAX_TENSOR_DIMENSIONS
         ), f"Only support dimensions within 1-{self.MAX_TENSOR_DIMENSIONS}"
         self.block_if_full()
-        logger.debug(f"prefill buffer_size_lock")
         with self.buffer_size_lock:
             self.buffer_size = self.buffer_size + tensor_size
-        logger.debug(f"prefill buffer_size_lock with signal send")
         self.transport_thread.submit(
             self.send_tensor_wrapper_with_signal_pipe,
             tensor,

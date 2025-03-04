@@ -594,6 +594,9 @@ def get_open_port(force: bool = False) -> int:
         else:
             # `port` can be not available
             return port
+    
+    if dist_kv.IS_KV_PRODUCER:
+        port += 2
 
     if port is not None:
         while True:

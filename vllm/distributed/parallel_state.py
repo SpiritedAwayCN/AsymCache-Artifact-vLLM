@@ -172,6 +172,7 @@ class GroupCoordinator:
         use_custom_allreduce: bool,
         use_tpu_communicator: bool,
         use_message_queue_broadcaster: bool = False,
+        secondary_message_queue_broadcaster: bool = False,
         group_name: Optional[str] = None,
     ):
         group_name = group_name or "anonymous"
@@ -241,6 +242,10 @@ class GroupCoordinator:
         if use_message_queue_broadcaster and self.world_size > 1:
             self.mq_broadcaster = MessageQueue.create_from_process_group(
                 self.cpu_group, 1 << 22, 6)
+            
+            if secondary_message_queue_broadcaster:
+                self.mq_broadcaster2 = MessageQueue.create_from_process_group(
+                    self.cpu_group, 1 << 22, 6)
 
     @property
     def first_rank(self):
@@ -484,6 +489,13 @@ class GroupCoordinator:
                                                     src=self.ranks[src],
                                                     group=self.cpu_group)
             return recv[0]
+    
+    def broadcast_object_secondary(self, obj: Optional[Any] = None, src: int = 0):
+        assert self.mq_broadcaster2 is not None, "Secondary message queue broadcaster is not initialized"
+        if self.world_size == 1:
+            return obj
+        assert src == 0, "Message queue broadcaster only supports src=0"
+        return self.mq_broadcaster2.broadcast_object(obj)
 
     def broadcast_object_list(self,
                               obj_list: List[Any],
@@ -854,6 +866,7 @@ def init_model_parallel_group(
     backend: str,
     use_custom_allreduce: Optional[bool] = None,
     use_message_queue_broadcaster: bool = False,
+    secondary_message_queue_broadcaster: bool = False,
     group_name: Optional[str] = None,
 ) -> GroupCoordinator:
     if use_custom_allreduce is None:
@@ -866,6 +879,7 @@ def init_model_parallel_group(
         use_custom_allreduce=use_custom_allreduce,
         use_tpu_communicator=True,
         use_message_queue_broadcaster=use_message_queue_broadcaster,
+        secondary_message_queue_broadcaster=secondary_message_queue_broadcaster,
         group_name=group_name,
     )
 
@@ -900,6 +914,19 @@ def get_disagg_group() -> dist_kv.KV_transfer_agent:
     assert _DISAGG is not None, (
         "disaggregated prefill parallel group is not initialized")
     return _DISAGG
+
+
+# kept for backward compatibility
+get_disaggregated_prefill_group = get_disagg_group
+
+_INSTP: Optional[GroupCoordinator] = None
+
+
+def get_instance_group() -> GroupCoordinator:
+    if dist_kv.IS_DISTRIBUTED_KV_INSTANCE:
+        assert _INSTP is not None, ("instance group is not initialized")
+        return _INSTP
+    return get_world_group()
 
 
 @contextmanager
@@ -1115,6 +1142,7 @@ def initialize_model_parallel(
                                     get_world_group().local_rank,
                                     backend,
                                     use_message_queue_broadcaster=True,
+                                    secondary_message_queue_broadcaster=True if dist_kv.IS_KV_PRODUCER else False,
                                     group_name="tp")
     logger.debug("_TP initialized for rank %d", torch.distributed.get_rank())
 
@@ -1139,7 +1167,8 @@ def initialize_model_parallel(
     logger.debug("_PP initialized for rank %d", torch.distributed.get_rank())
 
     if dist_kv.IS_DISTRIBUTED_KV_INSTANCE:
-        global _DISAGG
+        global _DISAGG, _INSTP
+        _INSTP = _TP # NOTE require pp=1
         logger.debug("Disaggregated prefill enabled, create _DISAGG group")
         group_ranks = []
         for i in range(world_size):
