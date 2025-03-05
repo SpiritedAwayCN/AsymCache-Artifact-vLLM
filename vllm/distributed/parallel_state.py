@@ -491,9 +491,9 @@ class GroupCoordinator:
             return recv[0]
     
     def broadcast_object_secondary(self, obj: Optional[Any] = None, src: int = 0):
-        assert self.mq_broadcaster2 is not None, "Secondary message queue broadcaster is not initialized"
         if self.world_size == 1:
             return obj
+        assert self.mq_broadcaster2 is not None, "Secondary message queue broadcaster is not initialized"
         assert src == 0, "Message queue broadcaster only supports src=0"
         return self.mq_broadcaster2.broadcast_object(obj)
 
