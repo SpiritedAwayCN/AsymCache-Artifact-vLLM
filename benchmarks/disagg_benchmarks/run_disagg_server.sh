@@ -30,12 +30,12 @@ launch_disagg_prefill() {
   # optional for test:
   # --disable-async-output-proc
   # --enable-prefix-caching
-  VLLM_PORT=33611 VLLM_DISTRIBUTED_KV_ROLE=producer CUDA_VISIBLE_DEVICES=2,3 python3 \
+  VLLM_PORT=33611 VLLM_DISTRIBUTED_KV_ROLE=producer CUDA_VISIBLE_DEVICES=0,1,2,3 python3 \
       -m vllm.entrypoints.openai.api_server \
       --model $model \
       --port 8100 \
       --max-model-len 50000 \
-      --tensor-parallel-size 2 \
+      --tensor-parallel-size 4 \
       --disable-log-stats \
       --disable-log-requests \
       --disable-async-output-proc \
@@ -43,12 +43,12 @@ launch_disagg_prefill() {
       --enable_chunked_prefill False \
       --block-size 64 \
       --gpu-memory-utilization 0.8 &> PREFILL.txt &
-  VLLM_PORT=33611 VLLM_DISTRIBUTED_KV_ROLE=consumer CUDA_VISIBLE_DEVICES=6,7 python3 \
+  VLLM_PORT=33611 VLLM_DISTRIBUTED_KV_ROLE=consumer CUDA_VISIBLE_DEVICES=4,5,6,7 python3 \
       -m vllm.entrypoints.openai.api_server \
       --model $model \
       --port 8200 \
       --max-model-len 50000 \
-      --tensor-parallel-size 2 \
+      --tensor-parallel-size 4 \
       --disable-log-stats \
       --disable-log-requests \
       --disable-async-output-proc \

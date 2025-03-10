@@ -15,7 +15,7 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
-BASE_DIR = '/processing_data/infra/sca/dataset/LEval'
+BASE_DIR = '/home/pkuhetu/sca/dataset/LEval'
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
 API_URL = 'http://localhost:8047/v1/completions'
 
