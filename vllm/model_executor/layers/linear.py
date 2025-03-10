@@ -1082,8 +1082,8 @@ class RowParallelLinear(LinearBase):
                                                   bias=bias_)
         if self.reduce_results and self.tp_size > 1:
             # FIXME: This is a temporary fix to avoid all_reduce in the case
-            output = output_parallel
-            # output = tensor_model_parallel_all_reduce(output_parallel)
+            # output = output_parallel
+            output = tensor_model_parallel_all_reduce(output_parallel)
         else:
             output = output_parallel
 

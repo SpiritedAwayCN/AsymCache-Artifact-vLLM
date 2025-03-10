@@ -40,7 +40,9 @@ class PhysicalTokenBlock:
 
         self.computed = False
         
-        self.used_by_decode: bool = False
+        self.used_by_decode: bool = False # in prefill
+
+        self.shared_with_prefill: bool = False
 
     def __repr__(self) -> str:
         return (f'PhysicalTokenBlock(device={self.device}, '

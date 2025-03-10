@@ -133,7 +133,10 @@ class CachedBlockAllocator(BlockAllocatorBase):
         block = self.cached_blocks.get(block_hash, None)
         assert block is not None
         block.computed = status
-    
+
+        if block.num_hashed_tokens & (self.block_size - 1) == 0:
+            block.shared_with_prefill = True
+
     def change_block_used_status(self, block_hash_list: List[int], status: bool) -> None:
         assert IS_KV_PRODUCER
         for block_hash in block_hash_list:
@@ -578,7 +581,7 @@ class BlockSpaceManagerV1(BlockSpaceManager):
                     # swap in cached block
                     self.offload_swap.append((cpu_block.block_number, block.block_number, False))
                     self.cpu_allocator.evictor.add(cpu_block)
-                    logger.info(f"hit in cpu..logical_idx{logical_idx}")
+                    logger.debug(f"hit in cpu..logical_idx{logical_idx}")
                 # if self.seq_refactor:
                 #     self.refseq_tracker.add(block.block_hash, seq)
             else:

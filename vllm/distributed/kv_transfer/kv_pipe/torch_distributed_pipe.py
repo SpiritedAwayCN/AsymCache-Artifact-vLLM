@@ -275,7 +275,7 @@ class TorchDistributedPipe(KVPipeBase):
         logger.debug("start send_tensor_wrapper with signal")
         metadata = self._make_metadata(tensor)
         logger.debug(f"Sending metadata with signal pipe")
-        signal_pipe.send_tensor(metadata)
+        signal_pipe.send_tensor_list([metadata])
         logger.debug("Metadata sent with signal pipe")
         torch.distributed.send(tensor.to(self.device),
                                dst=self.target_rank_for_send,
@@ -325,7 +325,7 @@ class TorchDistributedPipe(KVPipeBase):
 
     def recv_tensor_wrapper_with_signal_pipe(self, signal_pipe: KVPipeBase) -> torch.Tensor:
         logger.debug("Receiving metadata with signal_pipe")
-        d_metadata = signal_pipe.recv_tensor()
+        d_metadata = signal_pipe.receive_tensor_list(1)[0]
         logger.debug(f"Received metadata with signal_pipe:{d_metadata}")
         buffer = self._prepare_recv_buffer(d_metadata)
         logger.debug("with signal, ready to receive tensor")

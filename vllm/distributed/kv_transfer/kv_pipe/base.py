@@ -9,7 +9,7 @@ handled by `KVPipeBase`.
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, List
 
 import torch
 
@@ -61,4 +61,10 @@ class KVPipeBase(ABC):
         Raises:
             NotImplementedError: This method must be implemented in subclasses.
         """
+        raise NotImplementedError
+    
+    def send_tensor_list(self, tensors: List[torch.Tensor]) -> None:
+        raise NotImplementedError
+
+    def receive_tensor_list(self, num_tensors: Optional[int] = 5) -> List[Optional[torch.Tensor]]:
         raise NotImplementedError

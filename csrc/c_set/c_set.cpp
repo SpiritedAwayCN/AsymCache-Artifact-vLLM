@@ -26,8 +26,10 @@ struct Item {
     Item(T1 w, T1 l, T3 h) : weight(w), last_accessed(l), hash(h) {}
     bool operator <(const Item &rhs) const {
         auto p = weight, q = rhs.weight;
-        if (last_accessed < rhs.last_accessed) p *= pow(constant::base, rhs.last_accessed - last_accessed);
-        else q *= pow(constant::base, last_accessed - rhs.last_accessed);
+        if (p < 1e9 && q < 1e9) {
+            if (last_accessed < rhs.last_accessed) p *= pow(constant::base, rhs.last_accessed - last_accessed);
+            else q *= pow(constant::base, last_accessed - rhs.last_accessed);
+        }
         return p<q-constant::epsilon || (p<q+constant::epsilon && hash < rhs.hash);
     }
 };
