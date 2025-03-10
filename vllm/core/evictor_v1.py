@@ -7,7 +7,9 @@ import torch.distributed
 
 from vllm.block import PhysicalTokenBlock, BASE_FREQ
 from vllm.logger import init_logger
-
+import vllm.envs as envs
+IS_KV_PRODUCER: bool = (envs.VLLM_DISTRIBUTED_KV_ROLE in ["producer", "both"])
+IS_KV_CONSUMER: bool = (envs.VLLM_DISTRIBUTED_KV_ROLE in ["consumer", "both"])
 logger = init_logger(__name__)
 
 timestamp_thres_nblock = 1000
@@ -21,6 +23,7 @@ class EvictionPolicy(enum.Enum):
     LRU2 = enum.auto()
     LRU3 = enum.auto()
     MWF = enum.auto() # Minimum Weight First，MWF
+    MWF2 = enum.auto() # Minimum Weight First, MWF & shared block first
     LFU = enum.auto()
 
 
@@ -275,6 +278,7 @@ class LFUEvictor(Evictor):
         evicted_block.computed = False
         evicted_block.total_count = 0
         evicted_block.used_by_decode = False
+        evicted_block.shared_with_prefill = False
         return evicted_block
 
     def add(self, block: PhysicalTokenBlock):
@@ -326,6 +330,7 @@ class WeightEvictor(Evictor):
         evicted_block.computed = False
         evicted_block.total_count = 0
         evicted_block.used_by_decode = False
+        evicted_block.shared_with_prefill = False
         if not self._has_evicted:
             self._has_evicted = True
             logger.info(f"First eviction, heap size = {len(self.free_table)}")
@@ -347,6 +352,72 @@ class WeightEvictor(Evictor):
     def num_blocks(self) -> int:
         return len(self.free_table)
 
+class WeightEvictor2(Evictor):
+
+    def __init__(self, base, delta_func):
+        logger.info(f"[rank {torch.distributed.get_rank()}]  {self.__class__.__name__} is used, base is {base}.")
+        # self.delta(len) ---> delta_T
+        self.delta = delta_func
+        # block_hash ---> (block, weight)
+        self.free_table: Dict[int, PhysicalTokenBlock] = dict()
+
+        import sys
+        import os
+        module_directory = os.environ.get("CSET_DIR", None)
+        if module_directory is None:
+            logger.error("CSET_DIR environment variable not set")
+        else:
+            logger.info(f"Using CSET_DIR: {module_directory}")
+        sys.path.append(module_directory)
+        from c_set import c_set
+        self.heap = c_set(base)
+        self._has_evicted = False
+
+    def __contains__(self, block_hash: int) -> bool:
+        return block_hash in self.free_table
+
+    def evict(self) -> PhysicalTokenBlock:
+        if len(self.free_table) == 0:
+            raise ValueError("No usable cache memory left")
+
+        evicted_hash = self.heap.pop_first()
+        evicted_block = self.free_table.pop(evicted_hash)
+        evicted_block.computed = False
+        evicted_block.total_count = 0
+        evicted_block.used_by_decode = False
+        evicted_block.shared_with_prefill = False
+        if not self._has_evicted:
+            self._has_evicted = True
+            logger.info(f"First eviction, heap size = {len(self.free_table)}")
+        return evicted_block
+
+    def add(self, block: PhysicalTokenBlock):
+        self.free_table[block.block_hash] = block
+        if IS_KV_CONSUMER and not block.shared_with_prefill:
+            logger.debug(f"evictor add block only in consumer weight={1e9 + block.num_hashed_tokens}.")
+            self.heap.insert(1e9 + block.num_hashed_tokens, block.last_accessed, block.block_hash)
+        else:
+            logger.debug(f"evictor add block shared with producer weight={block.total_count * self.delta(block.num_hashed_tokens)}.")
+            self.heap.insert(block.total_count * self.delta(block.num_hashed_tokens), block.last_accessed, block.block_hash)
+
+    def remove(self, block_hash: int) -> PhysicalTokenBlock:
+        if block_hash not in self.free_table:
+            raise ValueError(
+                "Attempting to remove block that's not in the evictor")
+        block = self.free_table.pop(block_hash)
+        if IS_KV_CONSUMER and not block.shared_with_prefill:
+            logger.debug("evictor remove block only in consumer.")
+            self.heap.erase(1e9 + block.num_hashed_tokens, block.last_accessed, block.block_hash)
+        else:
+            logger.debug("evictor remove block shared with producer.")
+            self.heap.erase(block.total_count * self.delta(block.num_hashed_tokens), block.last_accessed, block_hash)
+
+        return block
+
+    @property
+    def num_blocks(self) -> int:
+        return len(self.free_table)
+
 def make_evictor(eviction_policy: EvictionPolicy, delta_fun = lambda x: x) -> Evictor:
     if eviction_policy == EvictionPolicy.LRU:
         return LRUEvictor()
@@ -356,7 +427,12 @@ def make_evictor(eviction_policy: EvictionPolicy, delta_fun = lambda x: x) -> Ev
         return LRU3Evictor()
     elif eviction_policy == EvictionPolicy.LFU:
         return LFUEvictor(BASE_FREQ)
-    else:
+    elif eviction_policy == EvictionPolicy.MWF:
         c = (2.91200787e-01 + 1.04221165e-04) // 16
         k = 2 * 1.04221165e-04
         return WeightEvictor(BASE_FREQ, lambda x: k * x + c)
+    else:
+        # WMF2 shared blocks first
+        c = (2.91200787e-01 + 1.04221165e-04) // 16
+        k = 2 * 1.04221165e-04
+        return WeightEvictor2(BASE_FREQ, lambda x: k * x + c)
