@@ -128,5 +128,6 @@ class CacheGuardThread:
             hash_matches=hash_matches,
             is_driver=self.is_driver,
             guard_layer_state=self.guard_layer_state,
+            instance_group=get_tp_group(),
         )
         logger.debug("KV sent")

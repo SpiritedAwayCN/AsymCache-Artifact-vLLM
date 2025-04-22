@@ -24,6 +24,7 @@ FLOAT32_INT = -1049557997456592
 FLOAT64_INT = -452201007054137
 FLOAT8_E4M3FN_INT = -1066697177659525
 FLOAT8_E5M2_INT = -618182574682355
+UINT8_INT = -713283951028579
 
 DTYPE2INT = {
     torch.float16: FLOAT16_INT,
@@ -34,6 +35,7 @@ DTYPE2INT = {
     torch.float64: FLOAT64_INT,
     torch.float8_e4m3fn: FLOAT8_E4M3FN_INT,
     torch.float8_e5m2: FLOAT8_E5M2_INT,
+    torch.uint8: UINT8_INT,
 }
 
 INT2DTYPE = {
@@ -45,6 +47,7 @@ INT2DTYPE = {
     FLOAT64_INT: torch.float64,
     FLOAT8_E4M3FN_INT: torch.float8_e4m3fn,
     FLOAT8_E5M2_INT: torch.float8_e5m2,
+    UINT8_INT: torch.uint8,
 }
 
 
