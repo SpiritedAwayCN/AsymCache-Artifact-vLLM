@@ -6,6 +6,8 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <atomic>
+#include <iostream>
+#include <time.h>
 #include <cstdio>
 #define CUDA_CHECK(stmt)                                  \
 do {                                                      \
@@ -45,29 +47,42 @@ private:
     int insert_idx, pop_idx;
     size_t capacity, tensor_size, element_size;
 public:
-    c_buffer(int local_rank, int remote_rank, int world_size, const UniqueId &uid,
-             size_t tensor_numel, size_t capacity,
-             const torch::ScalarType dtype,
-             const torch::Device& device) {
-        printf("\nc_buffer.cu: initialize start local_rank:%d remote_rank:%d world_size:%d device:%d\n", local_rank, remote_rank, world_size, device.index());        
+    c_buffer(int local_rank, int remote_rank, int world_size, UniqueId &uid) {
         this->local_rank = local_rank;
         this->remote_rank = remote_rank;
-        this->element_size = torch::elementSize(dtype);
-        this->tensor_size = tensor_numel * this->element_size;
-        this->capacity = capacity;
+        const std::string& buffer = uid.UniqueId_to_bytes();
+        std::cout << "\nc_buffer.cu: rank=" << local_rank << " uid=" << buffer << std::endl;
 
         nvshmemx_init_attr_t attr;
         nvshmemx_set_attr_uniqueid_args(local_rank, world_size, &uid.id, &attr);
         nvshmemx_init_attr(NVSHMEMX_INIT_WITH_UNIQUEID, &attr);
-        int mype_node = nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE);
-        printf("c_buffer.cu: pe=%d, rank=%d, world_size=%d\n", mype_node, local_rank, world_size);
+        nvshmem_barrier_all();
+        shared_mem = NULL;
+        printf("\nc_buffer: rank = %d, initialized.\n", local_rank);
+    }
+    void allocate(size_t tensor_numel, size_t capacity,
+                  const torch::ScalarType dtype,
+                  const torch::Device& device) {
+        
+        this->element_size = torch::elementSize(dtype);
+        this->tensor_size = tensor_numel * this->element_size;
+        this->capacity = capacity;
+        printf("\nc_buffer.cu: initialize start local_rank:%d remote_rank:%d device:%d element_size:%d\n", local_rank, remote_rank, device.index(), this->element_size);        
 
         assert(device.is_cuda());
         CUDA_CHECK(cudaSetDevice(device.index()));
-
+        
+        cudaDeviceProp prop;
+        cudaGetDeviceProperties(&prop, device.index());
+        printf("\nc_buffer.cu: device uuid = %d busid = %d deviceid = %d\n", prop.uuid, prop.pciBusID, prop.pciDeviceID);
+        int mype_node = nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE);
         shared_mem = (char*)nvshmem_malloc(tensor_size * capacity);
         insert_idx = 0;
         pop_idx = capacity;
+        printf("\n rank = %d, allocated\n", local_rank);
+    }
+    int is_allocated() {
+        return shared_mem != NULL;
     }
     int sender_is_full() {
         return insert_idx == capacity;
@@ -108,6 +123,7 @@ public:
         pop_idx += 1;
     }
     ~c_buffer() {
+        nvshmem_free(shared_mem);
         nvshmem_finalize();
     }
 };
@@ -118,7 +134,9 @@ PYBIND11_MODULE(c_buffer, m) {
         .def_static("from_bytes", &UniqueId::bytes_to_UniqueId)
         .def_static("get_uniqueid", &UniqueId::get_UniqueId);
     py::class_<c_buffer>(m, "c_buffer")
-        .def(py::init<int, int, int, const UniqueId&, size_t, size_t, const torch::ScalarType, const torch::Device&>())
+        .def(py::init<int, int, int, UniqueId&>())
+        .def("allocate", &c_buffer::allocate)
+        .def("is_allocated", &c_buffer::is_allocated)
         .def("insert_tensor", &c_buffer::insert_tensor)
         .def("pop_tensor", &c_buffer::pop_tensor)
         .def("sender_is_full", &c_buffer::sender_is_full)

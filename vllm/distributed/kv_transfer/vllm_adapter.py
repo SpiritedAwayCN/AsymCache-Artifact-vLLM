@@ -87,7 +87,8 @@ class KV_transfer_agent:
         local_rank: int,
         torch_distributed_backend: Union[str, Backend] = DISTRIBUTED_BACKEND,
         # FIXME(Kuntai): remove this hardcoding
-        lookup_buffer_size: int = int(1e10)):
+        lookup_buffer_size: int = int(1e10),
+        instance_group = None):
 
         self.block_buffer_size = 8
         self.block_buffer = None
@@ -170,14 +171,27 @@ class KV_transfer_agent:
         for ranks in group_ranks:
             self.world_size += len(ranks)
 
+        uid = None
         if IS_KV_PRODUCER:
-            self.uid = UniqueId.get_uniqueid()
-            data = self.uid.to_bytes()
-            self.uid_tensor = torch.tensor(list(data), dtype=torch.uint8, device='cpu')
-            self.send_signal_pipe.send_tensor_list([self.uid_tensor])
+            if instance_group.is_first_rank:
+                uid = UniqueId.get_uniqueid()
+                data = uid.to_bytes()
+                uid_tensor = torch.tensor(list(data), dtype=torch.uint8, device='cpu')
+                self.send_signal_pipe.send_tensor_list([uid_tensor])
+                instance_group.broadcast_tensor_dict({'uid_tensor': uid_tensor}, src=0)
+            else:
+                uid_tensor = instance_group.broadcast_tensor_dict({}, src=0)['uid_tensor']
+                uid = UniqueId.from_bytes(bytes(uid_tensor.cpu().tolist()))
         else:
-            self.uid_tensor = self.recv_signal_pipe.receive_tensor_list(1)[0]
-            self.uid = UniqueId.from_bytes(bytes(self.uid_tensor.cpu().tolist()))
+            if instance_group.is_first_rank:
+                uid_tensor = self.recv_signal_pipe.receive_tensor_list(1)[0]
+                uid = UniqueId.from_bytes(bytes(uid_tensor.cpu().tolist()))
+                instance_group.broadcast_tensor_dict({'uid_tensor': uid_tensor}, src=0)
+            else:
+                uid_tensor = instance_group.broadcast_tensor_dict({}, src=0)['uid_tensor']
+                uid = UniqueId.from_bytes(bytes(uid_tensor.cpu().tolist()))
+        self.block_buffer = c_buffer(self.send_pipe.rank, self.send_pipe.target_rank_for_recv,
+                                     self.world_size, uid)
 
     def send_kv_caches_and_hidden_states(
         self,
@@ -661,25 +675,13 @@ class KV_transfer_agent:
             self.send_signal_pipe.send_tensor_list([hash_matches])
         
         if self.send_pipe is not None:
-            if self.block_buffer is None:
-                if is_driver:
-                    instance_group.broadcast_tensor_dict({'uid_tensor': self.uid_tensor},
-                                                        src=0)
-                else:
-                    self.uid_tensor = instance_group.broadcast_tensor_dict({},
-                                                        src=0)['uid_tensor']
-                    self.uid = UniqueId.from_bytes(bytes(self.uid_tensor.cpu().tolist()))
-
+            if not self.block_buffer.is_allocated():
                 shape = kv_caches[0].shape # 2, total_blocks, block_size, num_heads, head_dim           
                 logger.info(f"send block dtype={kv_caches[0].dtype} device*={kv_caches[0].device}")
-                print(f"rank:{self.send_pipe.rank}, uid_tensor:{self.uid_tensor}")
-                self.block_buffer = c_buffer(self.send_pipe.rank, self.send_pipe.target_rank_for_recv,
-                                             self.world_size, self.uid,
-                                             shape[2] * shape[3] * shape[4],
-                                             self.block_buffer_size,
-                                             kv_caches[0].dtype,
-                                             kv_caches[0].device)
-                logger.info("direct_send_kv_caches: c_buffer initialized.")
+                self.block_buffer.allocate(shape[2] * shape[3] * shape[4],
+                                           self.block_buffer_size,
+                                           kv_caches[0].dtype,
+                                           kv_caches[0].device)
 
         assert guard_layer_state is not None, logger.debug("guard_layer_state is None in direct_send_kv_caches.")
         assert self.send_pipe is not None, logger.debug("send_pipe is None in direct_send_kv_caches.")
@@ -735,24 +737,12 @@ class KV_transfer_agent:
         start_layer = model_executable.model.start_layer
         end_layer = model_executable.model.end_layer
 
-        if self.block_buffer is None:
-            if is_driver:
-                instance_group.broadcast_tensor_dict({'uid_tensor': self.uid_tensor},
-                                                    src=0)
-            else:
-                self.uid_tensor = instance_group.broadcast_tensor_dict({},
-                                                    src=0)['uid_tensor']
-                self.uid = UniqueId.from_bytes(bytes(self.uid_tensor.cpu().tolist()))
-            print(f"rank:{self.send_pipe.rank}, uid_tensor:{self.uid_tensor}")
+        if not self.block_buffer.is_allocated():
             shape = kv_caches[0].shape # 2, total_blocks, block_size, num_heads, head_dim
-            logger.info(f"recv block dtype={kv_caches[0].dtype} device*={kv_caches[0].device}")
-            self.block_buffer = c_buffer(self.send_pipe.rank, self.send_pipe.target_rank_for_recv,
-                                         self.world_size, self.uid,
-                                         shape[2] * shape[3] * shape[4],
-                                         self.block_buffer_size,
-                                         kv_caches[0].dtype,
-                                         kv_caches[0].device)
-            logger.info("direct_recv_kv_caches: c_buffer initialized.")
+            self.block_buffer.allocate(shape[2] * shape[3] * shape[4],
+                                        self.block_buffer_size,
+                                        kv_caches[0].dtype,
+                                        kv_caches[0].device)
 
         for layer_id in range(start_layer, end_layer):
             for idx, block_id in enumerate(block_ids):
