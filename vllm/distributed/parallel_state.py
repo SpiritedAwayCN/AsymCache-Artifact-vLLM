@@ -1179,6 +1179,7 @@ def initialize_model_parallel(
         _DISAGG = dist_kv.KV_transfer_agent(
             group_ranks=group_ranks,
             local_rank=get_world_group().local_rank,
+            instance_group=_TP,
         )
         logger.debug("_DISAGG initialized for rank %d",
                      torch.distributed.get_rank())

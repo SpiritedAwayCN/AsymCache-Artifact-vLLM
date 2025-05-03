@@ -30,6 +30,8 @@ from torch.distributed import Backend,P2POp, isend, irecv
 
 import vllm.distributed.kv_transfer.kv_lookup_buffer.simple_buffer as sklb
 import vllm.envs as envs
+import sys
+import os
 from vllm import _custom_ops as ops
 from vllm.distributed.kv_transfer.kv_lookup_buffer.base import (
     KVLookupBufferBase)
@@ -60,6 +62,15 @@ DISTRIBUTED_BACKEND: str = "gloo" if (IS_KV_PRODUCER
 DISTRIBUTED_DEVICE: str = "cpu" if (IS_KV_PRODUCER
                                     and IS_KV_CONSUMER) else "cuda"
 
+# import c_buffer
+module_directory = os.environ.get("CBUFFER_DIR", None)
+if module_directory is None:
+    logger.error("CBUFFER_DIR environment variable not set")
+else:
+    logger.info(f"Using CBUFFER_DIR: {module_directory}")
+sys.path.append(module_directory)
+from c_buffer import UniqueId
+from c_buffer import c_buffer
 
 class KV_transfer_agent:
     """
@@ -76,11 +87,10 @@ class KV_transfer_agent:
         local_rank: int,
         torch_distributed_backend: Union[str, Backend] = DISTRIBUTED_BACKEND,
         # FIXME(Kuntai): remove this hardcoding
-        lookup_buffer_size: int = int(1e10)):
+        lookup_buffer_size: int = int(1e10),
+        instance_group = None):
 
         self.block_buffer_size = 8
-        self.block_buffer_num = 0
-        self.block_buffer_idx = 0
         self.block_buffer = None
         self.lookup_buffer_size = lookup_buffer_size
 
@@ -156,6 +166,32 @@ class KV_transfer_agent:
                                                     self.recv_pipe,
                                                     self.lookup_buffer_size)
             self.tensor_device = DISTRIBUTED_DEVICE
+
+        self.world_size = 0
+        for ranks in group_ranks:
+            self.world_size += len(ranks)
+
+        uid = None
+        if IS_KV_PRODUCER:
+            if instance_group.is_first_rank:
+                uid = UniqueId.get_uniqueid()
+                data = uid.to_bytes()
+                uid_tensor = torch.tensor(list(data), dtype=torch.uint8, device='cpu')
+                self.send_signal_pipe.send_tensor_list([uid_tensor])
+                instance_group.broadcast_tensor_dict({'uid_tensor': uid_tensor}, src=0)
+            else:
+                uid_tensor = instance_group.broadcast_tensor_dict({}, src=0)['uid_tensor']
+                uid = UniqueId.from_bytes(bytes(uid_tensor.cpu().tolist()))
+        else:
+            if instance_group.is_first_rank:
+                uid_tensor = self.recv_signal_pipe.receive_tensor_list(1)[0]
+                uid = UniqueId.from_bytes(bytes(uid_tensor.cpu().tolist()))
+                instance_group.broadcast_tensor_dict({'uid_tensor': uid_tensor}, src=0)
+            else:
+                uid_tensor = instance_group.broadcast_tensor_dict({}, src=0)['uid_tensor']
+                uid = UniqueId.from_bytes(bytes(uid_tensor.cpu().tolist()))
+        self.block_buffer = c_buffer(self.send_pipe.rank, self.send_pipe.target_rank_for_recv,
+                                     self.world_size, uid)
 
     def send_kv_caches_and_hidden_states(
         self,
@@ -593,28 +629,24 @@ class KV_transfer_agent:
         return hidden_or_intermediate_states, bypass_model_exec, model_input
 
     def send_block_buffer_append(self, block):
-        self.block_buffer[self.block_buffer_num].copy_(block)
-        self.block_buffer_num += 1
-        if self.block_buffer_num == self.block_buffer_size:
-            self.send_pipe.send_tensor_with_signal_pipe(self.block_buffer, self.send_signal_pipe)
-            self.block_buffer_num = 0
+        self.block_buffer.insert_tensor(block)
+        if self.block_buffer.sender_is_full():
+            # receive flag=None
+            self.recv_signal_pipe.receive_tensor_list(1)
+            self.block_buffer.remote_put()
 
     def send_block_buffer_clear(self):
-        if self.block_buffer_num > 0:
-            self.send_pipe.send_tensor_with_signal_pipe(
-                self.block_buffer[:self.block_buffer_num],
-                self.send_signal_pipe)
-            self.block_buffer_num = 0
+        if self.block_buffer.sender_any():
+            # receive flag=None
+            self.recv_signal_pipe.receive_tensor_list(1)
+            self.block_buffer.remote_put()
     
-    def recv_block_buffer_pop(self):
-        if self.block_buffer_idx == self.block_buffer_num:
-            recvtensor = self.recv_pipe.recv_tensor_with_signal_pipe(self.recv_signal_pipe)
-            self.block_buffer_num = recvtensor.shape[0]
-            self.block_buffer_idx = 0
-            self.block_buffer[:self.block_buffer_num].copy_(recvtensor)
-        assert self.block_buffer_idx < self.block_buffer_num
-        self.block_buffer_idx += 1
-        return self.block_buffer[self.block_buffer_idx - 1]
+    def recv_block_buffer_pop(self, block):
+        if self.block_buffer.recver_is_empty():
+            # send flag=None
+            self.send_signal_pipe.send_tensor_list([None])
+            self.block_buffer.remote_get()
+        self.block_buffer.pop_tensor(block)
 
     def direct_send_kv_caches(
         self,
@@ -624,12 +656,13 @@ class KV_transfer_agent:
         hash_matches: List[int],
         is_driver: bool,
         guard_layer_state: Optional[CacheGuardLayerState] = None,
+        instance_group = None,
     ) -> None:
         if len(block_ids) == 0:
             logger.warning("No matching block IDs found. Sending empty tensors.")
             if self.send_pipe is not None and is_driver:
-                empty_tensor = torch.empty(0, device="cuda")
-                self.send_pipe.send_tensor_with_signal_pipe(empty_tensor, self.send_signal_pipe)
+                empty_tensor = torch.empty(0, device="cpu")
+                self.send_signal_pipe.send_tensor_list([empty_tensor])
             return
 
         start_layer = model_executable.model.start_layer
@@ -637,16 +670,18 @@ class KV_transfer_agent:
 
         if self.send_pipe is not None and is_driver:
             # generate an on-device tensor from hash_matches
-            hash_matches = torch.tensor(hash_matches, dtype=torch.int64, device="cuda")
-            self.send_pipe.send_tensor_with_signal_pipe(hash_matches, self.send_signal_pipe)
+            hash_matches = torch.tensor(hash_matches, dtype=torch.int64, device="cpu")
+            logger.info(f"direct_send_kv_caches: driver send hash_matches:{hash_matches}")
+            self.send_signal_pipe.send_tensor_list([hash_matches])
         
         if self.send_pipe is not None:
-            if self.block_buffer is None:
-                shape = kv_caches[0].shape # 2, total_blocks, block_size, num_heads, head_dim
-                self.block_buffer = torch.empty((self.block_buffer_size, shape[2], shape[3], shape[4]),
-                                                dtype=kv_caches[0].dtype,
-                                                device=kv_caches[0].device)
-            self.block_buffer_num = 0
+            if not self.block_buffer.is_allocated():
+                shape = kv_caches[0].shape # 2, total_blocks, block_size, num_heads, head_dim           
+                logger.info(f"send block dtype={kv_caches[0].dtype} device*={kv_caches[0].device}")
+                self.block_buffer.allocate(shape[2] * shape[3] * shape[4],
+                                           self.block_buffer_size,
+                                           kv_caches[0].dtype,
+                                           kv_caches[0].device)
 
         assert guard_layer_state is not None, logger.debug("guard_layer_state is None in direct_send_kv_caches.")
         assert self.send_pipe is not None, logger.debug("send_pipe is None in direct_send_kv_caches.")
@@ -676,7 +711,7 @@ class KV_transfer_agent:
     ) -> None:
         if is_driver:
             # Receive hash_matches tensor
-            hash_matches = self.recv_pipe.recv_tensor_with_signal_pipe(self.recv_signal_pipe)
+            hash_matches = self.recv_signal_pipe.receive_tensor_list(1)[0]
             
             if hash_matches.numel() == 0:
                 logger.warning("No matching hash matches found. Receiving empty tensors.")
@@ -702,13 +737,12 @@ class KV_transfer_agent:
         start_layer = model_executable.model.start_layer
         end_layer = model_executable.model.end_layer
 
-        if self.block_buffer is None:
+        if not self.block_buffer.is_allocated():
             shape = kv_caches[0].shape # 2, total_blocks, block_size, num_heads, head_dim
-            self.block_buffer = torch.empty((self.block_buffer_size, shape[2], shape[3], shape[4]),
-                                            dtype=kv_caches[0].dtype,
-                                            device=kv_caches[0].device)
-        self.block_buffer_num = 0
-        self.block_buffer_idx = 0
+            self.block_buffer.allocate(shape[2] * shape[3] * shape[4],
+                                        self.block_buffer_size,
+                                        kv_caches[0].dtype,
+                                        kv_caches[0].device)
 
         for layer_id in range(start_layer, end_layer):
             for idx, block_id in enumerate(block_ids):
@@ -718,8 +752,8 @@ class KV_transfer_agent:
                 key_cache = kv_cache[0]  # Shape: [total_blocks, block_size, num_heads, head_dim]
                 value_cache = kv_cache[1]  # Shape: [total_blocks, block_size, num_heads, head_dim]
 
-                key_cache[block_id].copy_(self.recv_block_buffer_pop())
-                value_cache[block_id].copy_(self.recv_block_buffer_pop())
+                self.recv_block_buffer_pop(key_cache[block_id])
+                self.recv_block_buffer_pop(value_cache[block_id])
 
         if is_driver:
             for idx, block_id in enumerate(block_ids):
