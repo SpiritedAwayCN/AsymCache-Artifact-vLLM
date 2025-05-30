@@ -1,5 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+"""
+    Implements a distributed key-value (KV) cache transfer mechanism.
+
+    Key Features:
+    - Distributed KV cache transmission using PyNccl pipes.
+    - Non-blocking `insert`, blocking `drop_select`.
+    - Use CPU signal pipe to avoid racing condition
+    - Handles buffer size constraints and provide backpressure mechanism to
+      stop the prefill instance when the decode instance is slow.
+"""
 import threading
-import time
 from collections import deque
 from typing import Deque, List, Optional, Union
 
@@ -13,18 +23,18 @@ from vllm.logger import init_logger
 logger = init_logger(__name__)
 
 
-class SimpleKVLookupBuffer(KVLookupBufferBase):
+class SimpleBuffer(KVLookupBufferBase):
 
     def __init__(self, signal_pipe: KVPipeBase, data_pipe: KVPipeBase,
-                 buffer_size_thresh: int):
+                 buffer_size_thresh: float):
         """
-        signal_pipe: on CPU 
-        
-        NOTE: on-device recv will block all threads in the process, making the 
-        KV cache producer unable to listen to new request while transmitting 
-        KV cache. Luckily CPU recv only blocks the current thread so we use 
+        signal_pipe: on CPU
+
+        NOTE: on-device recv will block all threads in the process, making the
+        KV cache producer unable to listen to new request while transmitting
+        KV cache. Luckily CPU recv only blocks the current thread so we use
         CPU recv to listen to new request.
-        
+
         data_pipe: on device (e.g. GPU)
         """
 
@@ -32,12 +42,12 @@ class SimpleKVLookupBuffer(KVLookupBufferBase):
 
         self.buffer_size = 0
         self.buffer_size_threshold = buffer_size_thresh
-        self.buffer_lock = threading.Lock()
+        self.buffer_cv = threading.Condition()
         self.signal_pipe = signal_pipe
         self.data_pipe = data_pipe
         self.request_handling_thread: Optional[threading.Thread] = None
 
-        self.normal_signal = torch.tensor([0])
+        self.normal_signal = torch.tensor([0], device="cpu")
         self.end_signal = None
 
     def _matches(self, tokens_roi_sender: List[torch.Tensor],
@@ -74,6 +84,8 @@ class SimpleKVLookupBuffer(KVLookupBufferBase):
 
         assert tensor is not None, "Use self.data_pipe.send(None) instead"
         self.buffer_size -= tensor.element_size() * tensor.numel()
+        if tensor.dtype == torch.bool:
+            tensor = tensor.float()
         self.data_pipe.send_tensor(tensor)
 
     def _get_element_size(self, data: Optional[Union[List, torch.Tensor]]):
@@ -85,7 +97,7 @@ class SimpleKVLookupBuffer(KVLookupBufferBase):
             # so this check needs to go after the check above
             return 0
 
-        raise AssertionError("Unknown data type %s" % type(data))
+        raise AssertionError(f"Unknown data type {type(data)}")
 
     def _add_to_buffer(self, input_tokens: torch.Tensor, roi: torch.Tensor,
                        key: torch.Tensor, value: torch.Tensor,
@@ -103,11 +115,19 @@ class SimpleKVLookupBuffer(KVLookupBufferBase):
             hidden = hidden.clone()
 
         buffer_item = [input_tokens, roi, key, value, hidden]
+        data_size = sum([self._get_element_size(data) for data in buffer_item])
 
-        with self.buffer_lock:
-            for data in buffer_item:
-                self.buffer_size += self._get_element_size(data)
+        with self.buffer_cv:
+            if self.buffer_size + data_size > self.buffer_size_threshold:
+                # log outside the while loop to avoid this message being logged
+                # repeatedly.
+                logger.debug("KV transfer buffer is full. Handling...")
+                while self.buffer_size + data_size > self.buffer_size_threshold:
+                    self.buffer_cv.wait()
+
+            self.buffer_size += data_size
             self.buffer.append(buffer_item)
+            self.buffer_cv.notify()
 
     def _is_end_signal(self, signal):
         return signal is None
@@ -125,37 +145,36 @@ class SimpleKVLookupBuffer(KVLookupBufferBase):
                 input_tokens = self.data_pipe.recv_tensor()
 
                 roi = self.data_pipe.recv_tensor()
+                assert roi is not None, "Please provide the roi when sending "\
+                    "drop-select request"
+                roi = (roi > 0.5)
                 tokens_roi_recver = [input_tokens, roi]
 
-                matched_length = 0
-
-                # perform input tokens and roi matching
-                # FIXME: this matching is O(n), ideally it should be O(1)
-                # but this buffer size won't (and shouldn't) be too large so
-                # the fix is not urgent.
-                with self.buffer_lock:
-
+                def is_buffer_available(
+                    tokens_roi_recver: List[torch.Tensor], ) -> bool:
+                    # perform input tokens and roi matching
+                    # FIXME: this matching is O(n), ideally it should be O(1)
+                    # but this buffer size won't (and shouldn't) be too large so
+                    # the fix is not urgent.
                     for _ in range(len(self.buffer)):
-
-                        temp_length = self._matches(self.buffer[0],
-                                                    tokens_roi_recver)
-                        if temp_length > 0:
-                            matched_length = temp_length
-                            break
+                        if self._matches(self.buffer[0],
+                                         tokens_roi_recver) > 0:
+                            return True
                         # rotate the element we just accessed to the end
                         self.buffer.rotate(-1)
+                    return False
 
-                    if matched_length > 0:
-                        # need to clone the tensor
-                        # in case the tensor is freed before sending finishes
-                        matched_item = self.buffer.popleft()
-                        for tensor in matched_item:
-                            self._send_tensor_and_dec_size(tensor)
-
-                    else:
-                        # no match, just send None
-                        for _ in range(5):
-                            self.data_pipe.send_tensor(None)
+                with self.buffer_cv:
+                    while not is_buffer_available(tokens_roi_recver):
+                        logger.debug(
+                            "KV transfer buffer is not available. Waiting...")
+                        self.buffer_cv.wait()
+                    # need to clone the tensor
+                    # in case the tensor is freed before sending finishes
+                    matched_item = self.buffer.popleft()
+                    for tensor in matched_item:
+                        self._send_tensor_and_dec_size(tensor)
+                    self.buffer_cv.notify()
 
         except RuntimeError as e:
             if 'Connection closed by peer' not in str(e):
@@ -174,7 +193,7 @@ class SimpleKVLookupBuffer(KVLookupBufferBase):
         if isinstance(input_tokens, torch.Tensor):
             input_tokens = input_tokens.clone()
         if isinstance(roi, torch.Tensor):
-            roi = roi.clone()
+            roi = roi.clone().float()
 
         self.signal_pipe.send_tensor(self.normal_signal)
         self.data_pipe.send_tensor(input_tokens)
@@ -182,25 +201,19 @@ class SimpleKVLookupBuffer(KVLookupBufferBase):
 
         input_tokens = self.data_pipe.recv_tensor()
         roi = self.data_pipe.recv_tensor()
+        if roi is not None:
+            # convert from float tensor to bool tensor
+            # as PyNccl does not support sending bool tensor
+            roi = (roi > 0.5)
         key = self.data_pipe.recv_tensor()
         value = self.data_pipe.recv_tensor()
         hidden = self.data_pipe.recv_tensor()
 
         return [input_tokens, roi, key, value, hidden]
 
-    def full_handler(self):
-        time.sleep(0.001)
-
     def insert(self, input_tokens: torch.Tensor, roi: torch.Tensor,
                key: torch.Tensor, value: torch.Tensor,
                hidden: torch.Tensor) -> None:
-
-        if self.buffer_size > self.buffer_size_threshold:
-            # log outside the while loop to avoid this message being logged
-            # repeatedly.
-            logger.debug("KV transfer buffer is full. Handling...")
-        while self.buffer_size > self.buffer_size_threshold:
-            self.full_handler()
 
         self._add_to_buffer(input_tokens, roi, key, value, hidden)
 

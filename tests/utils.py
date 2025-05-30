@@ -1,20 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+
 import asyncio
+import copy
 import functools
 import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import warnings
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, Union
+from typing import Any, Callable, Literal, Optional, Union
 
+import cloudpickle
 import openai
 import pytest
 import requests
+import torch
+import torch.nn.functional as F
 from openai.types.completion import Completion
-from typing_extensions import ParamSpec, assert_never
+from typing_extensions import ParamSpec
 
 import vllm.envs as envs
 from tests.models.utils import TextTextLogprobs
@@ -26,7 +33,7 @@ from vllm.model_executor.model_loader.loader import get_model_loader
 from vllm.platforms import current_platform
 from vllm.transformers_utils.tokenizer import get_tokenizer
 from vllm.utils import (FlexibleArgumentParser, GB_bytes,
-                        cuda_device_count_stateless, get_open_port, is_hip)
+                        cuda_device_count_stateless, get_open_port)
 
 if current_platform.is_rocm():
     from amdsmi import (amdsmi_get_gpu_vram_usage,
@@ -41,8 +48,9 @@ if current_platform.is_rocm():
         finally:
             amdsmi_shut_down()
 elif current_platform.is_cuda():
-    from pynvml import (nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo,
-                        nvmlInit, nvmlShutdown)
+    from vllm.third_party.pynvml import (nvmlDeviceGetHandleByIndex,
+                                         nvmlDeviceGetMemoryInfo, nvmlInit,
+                                         nvmlShutdown)
 
     @contextmanager
     def _nvml():
@@ -67,9 +75,10 @@ class RemoteOpenAIServer:
 
     def __init__(self,
                  model: str,
-                 vllm_serve_args: List[str],
+                 vllm_serve_args: list[str],
                  *,
-                 env_dict: Optional[Dict[str, str]] = None,
+                 env_dict: Optional[dict[str, str]] = None,
+                 seed: Optional[int] = 0,
                  auto_port: bool = True,
                  max_wait_seconds: Optional[float] = None) -> None:
         if auto_port:
@@ -81,6 +90,12 @@ class RemoteOpenAIServer:
             vllm_serve_args = vllm_serve_args + [
                 "--port", str(get_open_port())
             ]
+        if seed is not None:
+            if "--seed" in vllm_serve_args:
+                raise ValueError("You have manually specified the seed "
+                                 f"when `seed={seed}`.")
+
+            vllm_serve_args = vllm_serve_args + ["--seed", str(seed)]
 
         parser = FlexibleArgumentParser(
             description="vLLM's remote OpenAI server.")
@@ -88,6 +103,9 @@ class RemoteOpenAIServer:
         args = parser.parse_args(["--model", model, *vllm_serve_args])
         self.host = str(args.host or 'localhost')
         self.port = int(args.port)
+
+        self.show_hidden_metrics = \
+            args.show_hidden_metrics_for_version is not None
 
         # download the model before starting the server to avoid timeout
         is_local = os.path.isdir(model)
@@ -133,15 +151,19 @@ class RemoteOpenAIServer:
             try:
                 if requests.get(url).status_code == 200:
                     break
-            except Exception as err:
+            except Exception:
+                # this exception can only be raised by requests.get,
+                # which means the server is not ready yet.
+                # the stack trace is not useful, so we suppress it
+                # by using `raise from None`.
                 result = self.proc.poll()
                 if result is not None and result != 0:
-                    raise RuntimeError("Server exited unexpectedly.") from err
+                    raise RuntimeError("Server exited unexpectedly.") from None
 
                 time.sleep(0.5)
                 if time.time() - start > timeout:
                     raise RuntimeError(
-                        "Server failed to start in time.") from err
+                        "Server failed to start in time.") from None
 
     @property
     def url_root(self) -> str:
@@ -150,25 +172,30 @@ class RemoteOpenAIServer:
     def url_for(self, *parts: str) -> str:
         return self.url_root + "/" + "/".join(parts)
 
-    def get_client(self):
+    def get_client(self, **kwargs):
+        if "timeout" not in kwargs:
+            kwargs["timeout"] = 600
         return openai.OpenAI(
             base_url=self.url_for("v1"),
             api_key=self.DUMMY_API_KEY,
+            max_retries=0,
+            **kwargs,
         )
 
-    def get_async_client(self):
-        return openai.AsyncOpenAI(
-            base_url=self.url_for("v1"),
-            api_key=self.DUMMY_API_KEY,
-            max_retries=0,
-        )
+    def get_async_client(self, **kwargs):
+        if "timeout" not in kwargs:
+            kwargs["timeout"] = 600
+        return openai.AsyncOpenAI(base_url=self.url_for("v1"),
+                                  api_key=self.DUMMY_API_KEY,
+                                  max_retries=0,
+                                  **kwargs)
 
 
 def _test_completion(
     client: openai.OpenAI,
     model: str,
     prompt: str,
-    token_ids: List[int],
+    token_ids: list[int],
 ):
     results = []
 
@@ -268,6 +295,62 @@ def _test_completion(
     return results
 
 
+def _test_completion_close(
+    client: openai.OpenAI,
+    model: str,
+    prompt: str,
+):
+    results = []
+
+    # test with text prompt
+    completion = client.completions.create(model=model,
+                                           prompt=prompt,
+                                           max_tokens=1,
+                                           logprobs=5,
+                                           temperature=0.0)
+
+    logprobs = completion.choices[0].logprobs.top_logprobs[0]
+    logprobs = {k: round(v, 2) for k, v in logprobs.items()}
+
+    results.append({
+        "test": "completion_close",
+        "logprobs": logprobs,
+    })
+
+    return results
+
+
+def _test_chat(
+    client: openai.OpenAI,
+    model: str,
+    prompt: str,
+):
+    results = []
+
+    messages = [{
+        "role": "user",
+        "content": [{
+            "type": "text",
+            "text": prompt
+        }]
+    }]
+
+    # test with text prompt
+    chat_response = client.chat.completions.create(model=model,
+                                                   messages=messages,
+                                                   max_tokens=5,
+                                                   temperature=0.0)
+
+    results.append({
+        "test": "completion_close",
+        "text": chat_response.choices[0].message.content,
+        "finish_reason": chat_response.choices[0].finish_reason,
+        "usage": chat_response.usage,
+    })
+
+    return results
+
+
 def _test_embeddings(
     client: openai.OpenAI,
     model: str,
@@ -291,13 +374,81 @@ def _test_embeddings(
     return results
 
 
+def _test_image_text(
+    client: openai.OpenAI,
+    model_name: str,
+    image_url: str,
+):
+    results = []
+
+    # test pure text input
+    messages = [{
+        "role":
+        "user",
+        "content": [
+            {
+                "type": "text",
+                "text": "How do you feel today?"
+            },
+        ],
+    }]
+
+    chat_completion = client.chat.completions.create(model=model_name,
+                                                     messages=messages,
+                                                     temperature=0.0,
+                                                     max_tokens=1,
+                                                     logprobs=True,
+                                                     top_logprobs=5)
+    top_logprobs = chat_completion.choices[0].logprobs.content[0].top_logprobs
+
+    for x in top_logprobs:
+        x.logprob = round(x.logprob, 2)
+
+    results.append({
+        "test": "pure_text",
+        "logprobs": top_logprobs,
+    })
+
+    messages = [{
+        "role":
+        "user",
+        "content": [
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": image_url
+                }
+            },
+            {
+                "type": "text",
+                "text": "What's in this image?"
+            },
+        ],
+    }]
+
+    chat_completion = client.chat.completions.create(model=model_name,
+                                                     messages=messages,
+                                                     temperature=0.0,
+                                                     max_tokens=1,
+                                                     logprobs=True,
+                                                     top_logprobs=5)
+    top_logprobs = chat_completion.choices[0].logprobs.content[0].top_logprobs
+
+    results.append({
+        "test": "text_image",
+        "logprobs": top_logprobs,
+    })
+
+    return results
+
+
 def compare_two_settings(model: str,
-                         arg1: List[str],
-                         arg2: List[str],
-                         env1: Optional[Dict[str, str]] = None,
-                         env2: Optional[Dict[str, str]] = None,
+                         arg1: list[str],
+                         arg2: list[str],
+                         env1: Optional[dict[str, str]] = None,
+                         env2: Optional[dict[str, str]] = None,
                          *,
-                         method: Literal["generate", "encode"] = "generate",
+                         method: str = "generate",
                          max_wait_seconds: Optional[float] = None) -> None:
     """
     Launch API server with two different sets of arguments/environments
@@ -321,10 +472,10 @@ def compare_two_settings(model: str,
 
 
 def compare_all_settings(model: str,
-                         all_args: List[List[str]],
-                         all_envs: List[Optional[Dict[str, str]]],
+                         all_args: list[list[str]],
+                         all_envs: list[Optional[dict[str, str]]],
                          *,
-                         method: Literal["generate", "encode"] = "generate",
+                         method: str = "generate",
                          max_wait_seconds: Optional[float] = None) -> None:
     """
     Launch API server with several different sets of arguments/environments
@@ -362,7 +513,7 @@ def compare_all_settings(model: str,
 
     prompt = "Hello, my name is"
     token_ids = tokenizer(prompt).input_ids
-    ref_results: List = []
+    ref_results: list = []
     for i, (args, env) in enumerate(zip(all_args, all_envs)):
         if can_force_load_format:
             # we are comparing the results and
@@ -373,7 +524,7 @@ def compare_all_settings(model: str,
             # environment variable to force the load format,
             # e.g. in quantization tests.
             args = args + ["--load-format", envs.VLLM_TEST_FORCE_LOAD_FORMAT]
-        compare_results: List = []
+        compare_results: list = []
         results = ref_results if i == 0 else compare_results
         with RemoteOpenAIServer(model,
                                 args,
@@ -393,10 +544,19 @@ def compare_all_settings(model: str,
 
             if method == "generate":
                 results += _test_completion(client, model, prompt, token_ids)
+            elif method == "generate_close":
+                results += _test_completion_close(client, model, prompt)
+            elif method == "generate_chat":
+                results += _test_chat(client, model, prompt)
+            elif method == "generate_with_image":
+                results += _test_image_text(
+                    client, model,
+                    "https://upload.wikimedia.org/wikipedia/commons/0/0b/RGBA_comp.png"
+                )
             elif method == "encode":
                 results += _test_embeddings(client, model, prompt)
             else:
-                assert_never(method)
+                raise ValueError(f"Unknown method: {method}")
 
             if i > 0:
                 # if any setting fails, raise an error early
@@ -406,6 +566,19 @@ def compare_all_settings(model: str,
                 compare_envs = all_envs[i]
                 for ref_result, compare_result in zip(ref_results,
                                                       compare_results):
+                    ref_result = copy.deepcopy(ref_result)
+                    compare_result = copy.deepcopy(compare_result)
+                    if "embedding" in ref_result and method == "encode":
+                        sim = F.cosine_similarity(
+                            torch.tensor(ref_result["embedding"]),
+                            torch.tensor(compare_result["embedding"]),
+                            dim=0,
+                        )
+                        assert sim >= 0.999, (
+                            f"Embedding for {model=} are not the same.\n"
+                            f"cosine_similarity={sim}\n")
+                        del ref_result["embedding"]
+                        del compare_result["embedding"]
                     assert ref_result == compare_result, (
                         f"Results for {model=} are not the same.\n"
                         f"{ref_args=} {ref_envs=}\n"
@@ -431,6 +604,7 @@ def init_test_distributed_environment(
 
 
 def multi_process_parallel(
+    monkeypatch: pytest.MonkeyPatch,
     tp_size: int,
     pp_size: int,
     test_target: Any,
@@ -441,26 +615,41 @@ def multi_process_parallel(
     # as compared to multiprocessing.
     # NOTE: We need to set working_dir for distributed tests,
     # otherwise we may get import errors on ray workers
-    ray.init(runtime_env={"working_dir": VLLM_PATH})
+    # NOTE: Force ray not to use gitignore file as excluding, otherwise
+    # it will not move .so files to working dir.
+    # So we have to manually add some of large directories
+    os.environ["RAY_RUNTIME_ENV_IGNORE_GITIGNORE"] = "1"
+    ray.init(
+        runtime_env={
+            "working_dir": VLLM_PATH,
+            "excludes":
+            ["build", ".git", "cmake-build-*", "shellcheck", "dist"]
+        })
 
     distributed_init_port = get_open_port()
     refs = []
     for rank in range(tp_size * pp_size):
         refs.append(
-            test_target.remote(tp_size, pp_size, rank, distributed_init_port))
+            test_target.remote(
+                monkeypatch,
+                tp_size,
+                pp_size,
+                rank,
+                distributed_init_port,
+            ), )
     ray.get(refs)
 
     ray.shutdown()
 
 
 @contextmanager
-def error_on_warning():
+def error_on_warning(category: type[Warning] = Warning):
     """
     Within the scope of this context manager, tests will fail if any warning
-    is emitted.
+    of the given category is emitted.
     """
     with warnings.catch_warnings():
-        warnings.simplefilter("error")
+        warnings.filterwarnings("error", category=category)
 
         yield
 
@@ -476,7 +665,7 @@ def get_physical_device_indices(devices):
 
 
 @_nvml()
-def wait_for_gpu_memory_to_clear(devices: List[int],
+def wait_for_gpu_memory_to_clear(devices: list[int],
                                  threshold_bytes: int,
                                  timeout_s: float = 120) -> None:
     # Use nvml instead of pytorch to reduce measurement error from torch cuda
@@ -484,10 +673,10 @@ def wait_for_gpu_memory_to_clear(devices: List[int],
     devices = get_physical_device_indices(devices)
     start_time = time.time()
     while True:
-        output: Dict[int, str] = {}
-        output_raw: Dict[int, float] = {}
+        output: dict[int, str] = {}
+        output_raw: dict[int, float] = {}
         for device in devices:
-            if is_hip():
+            if current_platform.is_rocm():
                 dev_handle = amdsmi_get_processor_handles()[device]
                 mem_info = amdsmi_get_gpu_vram_usage(dev_handle)
                 gb_used = mem_info["vram_used"] / 2**10
@@ -561,12 +750,85 @@ def fork_new_process_for_each_test(
     return wrapper
 
 
-def large_gpu_test(*, min_gb: int):
+def spawn_new_process_for_each_test(
+        f: Callable[_P, None]) -> Callable[_P, None]:
+    """Decorator to spawn a new process for each test function.
     """
-    Decorate a test to be skipped if no GPU is available or it does not have
-    sufficient memory.
 
-    Currently, the CI machine uses L4 GPU which has 24 GB VRAM.
+    @functools.wraps(f)
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> None:
+        # Check if we're already in a subprocess
+        if os.environ.get('RUNNING_IN_SUBPROCESS') == '1':
+            # If we are, just run the function directly
+            return f(*args, **kwargs)
+
+        import torch.multiprocessing as mp
+        with suppress(RuntimeError):
+            mp.set_start_method('spawn')
+
+        # Get the module
+        module_name = f.__module__
+
+        # Create a process with environment variable set
+        env = os.environ.copy()
+        env['RUNNING_IN_SUBPROCESS'] = '1'
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            output_filepath = os.path.join(tempdir, "new_process.tmp")
+
+            # `cloudpickle` allows pickling complex functions directly
+            input_bytes = cloudpickle.dumps((f, output_filepath))
+
+            cmd = [sys.executable, "-m", f"{module_name}"]
+
+            returned = subprocess.run(cmd,
+                                      input=input_bytes,
+                                      capture_output=True,
+                                      env=env)
+
+            # check if the subprocess is successful
+            try:
+                returned.check_returncode()
+            except Exception as e:
+                # wrap raised exception to provide more information
+                raise RuntimeError(f"Error raised in subprocess:\n"
+                                   f"{returned.stderr.decode()}") from e
+
+    return wrapper
+
+
+def create_new_process_for_each_test(
+    method: Optional[Literal["spawn", "fork"]] = None
+) -> Callable[[Callable[_P, None]], Callable[_P, None]]:
+    """Creates a decorator that runs each test function in a new process.
+
+    Args:
+        method: The process creation method. Can be either "spawn" or "fork". 
+               If not specified,
+               it defaults to "spawn" on ROCm platforms and "fork" otherwise.
+
+    Returns:
+        A decorator to run test functions in separate processes.
+    """
+    if method is None:
+        method = "spawn" if current_platform.is_rocm() else "fork"
+
+    assert method in ["spawn",
+                      "fork"], "Method must be either 'spawn' or 'fork'"
+
+    if method == "fork":
+        return fork_new_process_for_each_test
+
+    return spawn_new_process_for_each_test
+
+
+def large_gpu_mark(min_gb: int) -> pytest.MarkDecorator:
+    """
+    Get a pytest mark, which skips the test if the GPU doesn't meet
+    a minimum memory requirement in GB.
+
+    This can be leveraged via `@large_gpu_test` to skip tests in environments
+    without enough resources, or called when filtering tests to run directly.
     """
     try:
         if current_platform.is_cpu():
@@ -578,44 +840,64 @@ def large_gpu_test(*, min_gb: int):
             f"An error occurred when finding the available memory: {e}",
             stacklevel=2,
         )
-
         memory_gb = 0
 
-    test_skipif = pytest.mark.skipif(
+    return pytest.mark.skipif(
         memory_gb < min_gb,
-        reason=f"Need at least {memory_gb}GB GPU memory to run the test.",
+        reason=f"Need at least {min_gb}GB GPU memory to run the test.",
     )
 
+
+def large_gpu_test(*, min_gb: int):
+    """
+    Decorate a test to be skipped if no GPU is available or it does not have
+    sufficient memory.
+
+    Currently, the CI machine uses L4 GPU which has 24 GB VRAM.
+    """
+    mark = large_gpu_mark(min_gb)
+
     def wrapper(f: Callable[_P, None]) -> Callable[_P, None]:
-        return test_skipif(fork_new_process_for_each_test(f))
+        return mark(f)
 
     return wrapper
+
+
+def multi_gpu_marks(*, num_gpus: int):
+    """Get a collection of pytest marks to apply for `@multi_gpu_test`."""
+    test_selector = pytest.mark.distributed(num_gpus=num_gpus)
+    test_skipif = pytest.mark.skipif(
+        cuda_device_count_stateless() < num_gpus,
+        reason=f"Need at least {num_gpus} GPUs to run the test.",
+    )
+
+    return [test_selector, test_skipif]
 
 
 def multi_gpu_test(*, num_gpus: int):
     """
     Decorate a test to be run only when multiple GPUs are available.
     """
-    test_selector = getattr(pytest.mark, f"distributed_{num_gpus}_gpus")
-    test_skipif = pytest.mark.skipif(
-        cuda_device_count_stateless() < num_gpus,
-        reason=f"Need at least {num_gpus} GPUs to run the test.",
-    )
+    marks = multi_gpu_marks(num_gpus=num_gpus)
 
     def wrapper(f: Callable[_P, None]) -> Callable[_P, None]:
-        return test_selector(test_skipif(fork_new_process_for_each_test(f)))
+        func = create_new_process_for_each_test()(f)
+        for mark in reversed(marks):
+            func = mark(func)
+
+        return func
 
     return wrapper
 
 
 async def completions_with_server_args(
-    prompts: List[str],
+    prompts: list[str],
     model_name: str,
-    server_cli_args: List[str],
+    server_cli_args: list[str],
     num_logprobs: Optional[int],
     max_wait_seconds: int = 240,
     max_tokens: Union[int, list] = 5,
-) -> List[Completion]:
+) -> list[Completion]:
     '''Construct a remote OpenAI server, obtain an async client to the
     server & invoke the completions API to obtain completions.
 
@@ -640,7 +922,6 @@ async def completions_with_server_args(
     assert len(max_tokens) == len(prompts)
 
     outputs = None
-    max_wait_seconds = 240 * 3  # 240 is default
     with RemoteOpenAIServer(model_name,
                             server_cli_args,
                             max_wait_seconds=max_wait_seconds) as server:
@@ -659,7 +940,7 @@ async def completions_with_server_args(
     return outputs
 
 
-def get_client_text_generations(completions: List[Completion]) -> List[str]:
+def get_client_text_generations(completions: list[Completion]) -> list[str]:
     '''Extract generated tokens from the output of a
     request made to an Open-AI-protocol completions endpoint.
     '''
@@ -668,7 +949,7 @@ def get_client_text_generations(completions: List[Completion]) -> List[str]:
 
 
 def get_client_text_logprob_generations(
-        completions: List[Completion]) -> List[TextTextLogprobs]:
+        completions: list[Completion]) -> list[TextTextLogprobs]:
     '''Operates on the output of a request made to an Open-AI-protocol
     completions endpoint; obtains top-rank logprobs for each token in
     each :class:`SequenceGroup`
@@ -678,12 +959,3 @@ def get_client_text_logprob_generations(
     return [(text_generations, text,
              (None if x.logprobs is None else x.logprobs.top_logprobs))
             for completion in completions for x in completion.choices]
-
-
-def check_deprecated_block_manager_usage(test_name: str):
-    assert envs.VLLM_ALLOW_DEPRECATED_BLOCK_MANAGER_V1 is True, (
-        f"To allow the use of deprecated BlockSpaceManagerV1, set the "
-        f"environment variable VLLM_ALLOW_DEPRECATED_BLOCK_MANAGER_V1=1. "
-        f"You can run the tests with: "
-        f"`VLLM_ALLOW_DEPRECATED_BLOCK_MANAGER_V1=1 pytest {test_name}`"  #noqa
-    )

@@ -1,7 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+
 import json
 import re
-from json import JSONDecodeError, JSONDecoder
-from typing import Dict, List, Sequence, Union
+from collections.abc import Sequence
+from json import JSONDecoder
+from typing import Union
 
 import partial_json_parser
 from partial_json_parser.core.options import Allow
@@ -14,41 +17,24 @@ from vllm.entrypoints.openai.protocol import (ChatCompletionRequest,
                                               FunctionCall, ToolCall)
 from vllm.entrypoints.openai.tool_parsers.abstract_tool_parser import (
     ToolParser, ToolParserManager)
-from vllm.entrypoints.openai.tool_parsers.utils import find_common_prefix
+from vllm.entrypoints.openai.tool_parsers.utils import (find_common_prefix,
+                                                        is_complete_json,
+                                                        partial_json_loads)
 from vllm.logger import init_logger
 from vllm.utils import random_uuid
 
 logger = init_logger(__name__)
 
 
-# partial_json_parser doesn't support extra data and
-# JSONDecorder.raw_decode doesn't support partial JSON
-def partial_json_loads(input_str, flags):
-    try:
-        return (partial_json_parser.loads(input_str, flags), len(input_str))
-    except JSONDecodeError as e:
-        if "Extra data" in e.msg:
-            dec = JSONDecoder()
-            return dec.raw_decode(input_str)
-        else:
-            raise
-
-
-def is_complete_json(input_str):
-    try:
-        json.loads(input_str)
-        return True
-    except JSONDecodeError:
-        return False
-
-
 @ToolParserManager.register_module("llama3_json")
+@ToolParserManager.register_module("llama4_json")
 class Llama3JsonToolParser(ToolParser):
     """
     Tool call parser for Llama 3.1 models intended for use with the
     examples/tool_chat_template_llama.jinja template.
 
-    Used when --enable-auto-tool-choice --tool-call-parser mistral are all set
+    Used when --enable-auto-tool-choice --tool-call-parser llama3_json 
+    are all set
     """
 
     def __init__(self, tokenizer: PreTrainedTokenizerBase):
@@ -56,10 +42,10 @@ class Llama3JsonToolParser(ToolParser):
 
         # initialize properties used for state when parsing tool calls in
         # streaming mode
-        self.prev_tool_call_arr: List[Dict] = []
+        self.prev_tool_call_arr: list[dict] = []
         self.current_tool_id: int = -1
         self.current_tool_name_sent: bool = False
-        self.streamed_args_for_tool: List[str] = [
+        self.streamed_args_for_tool: list[str] = [
         ]  # map what has been streamed for each tool so far to a list
         self.bot_token = "<|python_tag|>"
         self.bot_token_id = tokenizer.encode(self.bot_token,
@@ -94,7 +80,7 @@ class Llama3JsonToolParser(ToolParser):
                 start_idx += end_idx + len('; ')
                 function_call_arr.append(obj)
 
-            tool_calls: List[ToolCall] = [
+            tool_calls: list[ToolCall] = [
                 ToolCall(
                     type="function",
                     function=FunctionCall(
@@ -112,9 +98,8 @@ class Llama3JsonToolParser(ToolParser):
                                                content=None)
             return ret
 
-        except Exception as e:
-            logger.error("Error in extracting tool call from response: %s", e)
-            print("ERROR", e)
+        except Exception:
+            logger.exception("Error in extracting tool call from response.")
             # return information to just treat the tool call as regular JSON
             return ExtractedToolCallInformation(tools_called=False,
                                                 tool_calls=[],
@@ -169,7 +154,7 @@ class Llama3JsonToolParser(ToolParser):
                 return None
 
             # select as the current tool call the one we're on the state at
-            current_tool_call: Dict = tool_call_arr[self.current_tool_id] \
+            current_tool_call: dict = tool_call_arr[self.current_tool_id] \
                 if len(tool_call_arr) > 0 else {}
 
             # case -- if no tokens have been streamed for the tool, e.g.
@@ -269,8 +254,8 @@ class Llama3JsonToolParser(ToolParser):
             self.prev_tool_call_arr = tool_call_arr
             return delta
 
-        except Exception as e:
-            logger.error("Error trying to handle streaming tool call: %s", e)
+        except Exception:
+            logger.exception("Error trying to handle streaming tool call.")
             logger.debug(
                 "Skipping chunk as a result of tool streaming extraction "
                 "error")

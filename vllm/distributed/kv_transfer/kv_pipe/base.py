@@ -1,15 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
 """
-This file defines 
-`KVPipeBase`
+This file defines an interface `KVPipeBase`
 that provides an abstraction for sending and receiving tensors, or None, via
 distributed communications.
 
-All distributed communications for disagg prefill & KV cache storage should be
-handled by `KVPipeBase`.
+All classes instantiated from this interface are assumed to be a FIFO pipe.
+
+If your distributed communication platform already supports key-value lookup,
+you can bypass this interface and directly start from `kv_lookup_buffer`.
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional, List
+from typing import Optional
 
 import torch
 
