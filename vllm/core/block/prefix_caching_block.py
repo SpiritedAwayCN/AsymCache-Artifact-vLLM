@@ -776,6 +776,7 @@ class PrefixCachingBlock(Block):
         self._last_accessed: float = _DEFAULT_LAST_ACCESSED_TIME
         self._computed = computed
         self._extra_hash = extra_hash
+        self._total_count: Optional[float] = 0
 
         # On the first time, we create the block object, and next we only
         # reinitialize it
@@ -860,6 +861,14 @@ class PrefixCachingBlock(Block):
     @block_id.setter
     def block_id(self, value) -> None:
         self._block.block_id = value
+    
+    @property
+    def total_count(self) -> Optional[float]:
+        return self._total_count
+    
+    @total_count.setter
+    def total_count(self, value: Optional[float]) -> None:
+        self._total_count = value
 
     @property
     def is_full(self) -> bool:

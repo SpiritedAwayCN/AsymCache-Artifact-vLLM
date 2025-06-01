@@ -89,10 +89,10 @@ def get_generation_time(llm, sampling_params, prompts):
     # llm.llm_engine.do_log_stats()
 
 # model_path = '/cpfs/29f69eb5e2e60f26/user/sft_intern/liyouquan/huggingface_models/Meta-Llama-3.1-8B-Instruct/'
-model_path = 'meta-llama/Meta-Llama-3.1-8B-Instruct'
-# model_path = 'LargeWorldModel/LWM-Text-1M'
-import os
-os.environ["CUDA_VISIBLE_DEVICES"]="3"
+# model_path = 'meta-llama/Meta-Llama-3.1-8B-Instruct'
+model_path = 'LargeWorldModel/LWM-Text-1M'
+# import os
+# os.environ["CUDA_VISIBLE_DEVICES"]="3"
 # set enable_prefix_caching=True to enable APC
 llm = LLM(
     model=model_path,
@@ -102,19 +102,19 @@ llm = LLM(
     enforce_eager=False,
     enable_chunked_prefill=False,
     # max_model_len=10000,
-    num_gpu_blocks_override=24,
+    # num_gpu_blocks_override=24,
     max_model_len=24*64,
     # max_model_len=211008,
     block_size=64,
 )
-block_manager = llm.llm_engine.scheduler[0].block_manager
-print(block_manager.__class__.__name__)
-# exit(0)
+# block_manager = llm.llm_engine.scheduler[0].block_manager
+# print(block_manager.__class__.__name__)
+# # exit(0)
 
-block_manager.test_ignore_cache_block_start = 1
-block_manager.test_ignore_cache_block_num = 4
-block_manager.test_ignore_cache_block_start_2 = 0
-block_manager.test_ignore_cache_block_num_2 = 0
+# block_manager.test_ignore_cache_block_start = 1
+# block_manager.test_ignore_cache_block_num = 4
+# block_manager.test_ignore_cache_block_start_2 = 0
+# block_manager.test_ignore_cache_block_num_2 = 0
 
 sampling_params = SamplingParams(temperature=0, max_tokens=10)
 

@@ -1099,7 +1099,7 @@ def initialize_model_parallel(
     _TP = init_model_parallel_group(group_ranks,
                                     get_world_group().local_rank,
                                     backend,
-                                W    use_message_queue_broadcaster=True,
+                                    use_message_queue_broadcaster=True,
                                     secondary_message_queue_broadcaster=True if dist_kv.IS_KV_PRODUCER else False,
                                     group_name="tp")
     logger.debug("_TP initialized for rank %d", torch.distributed.get_rank())

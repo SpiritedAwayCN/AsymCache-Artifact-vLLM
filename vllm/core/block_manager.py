@@ -13,6 +13,10 @@ from vllm.core.block.utils import check_no_caching_or_swa_for_blockmgr_encdec
 from vllm.core.interfaces import AllocStatus, BlockSpaceManager
 from vllm.sequence import Sequence, SequenceGroup, SequenceStatus
 from vllm.utils import Device
+from vllm.logger import init_logger
+logger = init_logger(__name__)
+
+# Type aliases for sequence IDs
 
 SeqId = int
 EncoderSeqId = str
@@ -159,6 +163,50 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
             # Add blocks to the block table only if the sequence is non empty.
             block_table.allocate(token_ids=seq.get_token_ids(),
                                  extra_hash=extra_hash)
+            
+            # Modified by SpiritedAwayCN
+            for logical_idx, block in enumerate(block_table._blocks._blocks):
+                if block.computed:
+                    if segment_status == 1:
+                        # multiple of 64
+                        segment_status += 1
+                        seq.suffix_computed_block_locs[0] = logical_idx
+                    elif segment_status == 3:
+                        segment_status += 1
+                        seq.suffix_computed_block_locs[2] = logical_idx
+                elif segment_status == 2:
+                    segment_status = 3
+                    seq.suffix_computed_block_locs[1] = logical_idx
+                elif segment_status == 0:
+                    segment_status = 1
+                    fitst_compute_start = logical_idx
+                elif segment_status == 4:
+                    segment_status = 5
+                    seq.suffix_computed_block_locs[3] = logical_idx
+            
+            if segment_status == 2:
+                seq.suffix_computed_block_locs[1] = logical_idx
+            elif seq.suffix_computed_block_locs[0] > 0:
+                real_total_count = block_table[seq.suffix_computed_block_locs[1]].total_count
+                for block in block_table._blocks._blocks[seq.suffix_computed_block_locs[0]:seq.suffix_computed_block_locs[1]]:
+                    block.total_count = real_total_count
+            
+            if segment_status == 4:
+                seq.suffix_computed_block_locs[3] = logical_idx
+            elif seq.suffix_computed_block_locs[2] > 0:
+                real_total_count = block_table[seq.suffix_computed_block_locs[3]].total_count
+                for block in block_table._blocks._blocks[seq.suffix_computed_block_locs[2]:seq.suffix_computed_block_locs[3]]:
+                    block.total_count = real_total_count
+
+                
+            seq.suffix_computed_block_locs[0] *= self.block_size
+            seq.suffix_computed_block_locs[1] *= self.block_size
+            seq.suffix_computed_block_locs[2] *= self.block_size
+            seq.suffix_computed_block_locs[3] *= self.block_size
+            
+            logger.info(f"seq: {seq}, "
+                        f"suffix_computed_block_locs: {seq.suffix_computed_block_locs}, "
+                        f"first_compute_start: {fitst_compute_start * self.block_size}")
 
         return block_table
 
