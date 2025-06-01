@@ -10,23 +10,19 @@ app = Quart(__name__)
 
 async def forward_request(url, data):
     async with aiohttp.ClientSession(timeout=AIOHTTP_TIMEOUT) as session:
-        headers = {
-            "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}"
-        }
-        async with session.post(url=url, json=data,
-                                headers=headers) as response:
+        headers = {"Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}"}
+        async with session.post(url=url, json=data, headers=headers) as response:
             if response.status == 200:
                 # if response.headers.get('Transfer-Encoding') == 'chunked':
                 if True:
-                    async for chunk_bytes in response.content.iter_chunked(
-                            1024):
+                    async for chunk_bytes in response.content.iter_chunked(1024):
                         yield chunk_bytes
                 else:
                     content = await response.read()
                     yield content
 
 
-@app.route('/v1/completions', methods=['POST'])
+@app.route("/v1/completions", methods=["POST"])
 async def handle_request():
     try:
         original_request_data = await request.get_json()
@@ -57,6 +53,7 @@ async def handle_request():
     except Exception as e:
         import sys
         import traceback
+
         exc_info = sys.exc_info()
         print("Error occurred in disagg prefill proxy server")
         print(e)
