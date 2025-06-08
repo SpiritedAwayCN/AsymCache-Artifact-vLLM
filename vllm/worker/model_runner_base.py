@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from vllm.model_executor import SamplingMetadata
     
 from vllm.core.block_manager_v1 import BlockSpaceManagerV1
-from vllm.core.block_manager_v2 import BlockSpaceManagerV2
+from vllm.core.block_manager import BlockSpaceManager
 logger = init_logger(__name__)
 
 T = TypeVar('T', bound="BroadcastableModelInput")
@@ -232,7 +232,7 @@ class ModelRunnerBase(ABC, Generic[T]):
         kv_caches: Optional[List[torch.Tensor]],
         intermediate_tensors: Optional[IntermediateTensors] = None,
         num_steps: int = 1,
-        block_manager: Optional[Union[BlockSpaceManagerV1, BlockSpaceManagerV2]] = None,
+        block_manager: Optional[Union[BlockSpaceManagerV1, BlockSpaceManager]] = None,
         **kwargs,
     ) -> Optional[List[SamplerOutput]]:
         """

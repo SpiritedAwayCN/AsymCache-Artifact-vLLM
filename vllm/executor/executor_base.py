@@ -17,7 +17,7 @@ from vllm.model_executor.layers.sampler import SamplerOutput
 from vllm.prompt_adapter.request import PromptAdapterRequest
 
 from vllm.core.block_manager_v1 import BlockSpaceManagerV1
-# from vllm.core.block_manager_v2 import BlockSpaceManagerV2
+from vllm.core.block_manager import BlockSpaceManager
 from vllm.sequence import ExecuteModelRequest, PoolerOutput
 from vllm.utils import make_async
 from vllm.worker.worker_base import WorkerBase
@@ -138,13 +138,13 @@ class ExecutorBase(ABC):
         return self.collective_rpc(rpc_func)
 
     def execute_model(
-        self, execute_model_req: ExecuteModelRequest,block_manager: Optional[Union[BlockSpaceManagerV1, BlockSpaceManagerV2]] = None
+        self, execute_model_req: ExecuteModelRequest,block_manager: Optional[Union[BlockSpaceManagerV1, BlockSpaceManager]] = None
     ) -> Optional[List[Union[SamplerOutput, PoolerOutput]]]:
         output = self.collective_rpc("execute_model",
                                      args=(execute_model_req, ))
         return output[0]
 
-    def stop_remote_worker_execution_loop(self, block_manager: Union[BlockSpaceManagerV1, BlockSpaceManagerV2] = None) -> None:
+    def stop_remote_worker_execution_loop(self, block_manager: Union[BlockSpaceManagerV1, BlockSpaceManager] = None) -> None:
         """Releases parallel workers from model loop."""
         return
 

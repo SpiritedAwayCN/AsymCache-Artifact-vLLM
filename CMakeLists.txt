@@ -77,6 +77,7 @@ endif()
 # so there is no need to do this explicitly with check_language/enable_language,
 # etc.
 #
+find_package(Torch REQUIRED)
 
 # Supported NVIDIA architectures.
 # This check must happen after find_package(Torch) because that's when CMAKE_CUDA_COMPILER_VERSION gets defined

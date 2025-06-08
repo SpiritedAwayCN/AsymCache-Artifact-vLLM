@@ -43,7 +43,7 @@ from vllm.sequence import IntermediateTensors
 import threading
 logger = init_logger(__name__)
 from vllm.core.block_manager_v1 import BlockSpaceManagerV1
-from vllm.core.block_manager_v2 import BlockSpaceManagerV2
+# from vllm.core.block_manager_v2 import BlockSpaceManagerV2
 from vllm.worker.CacheGuardLayerState import CacheGuardLayerState
 # check VLLM_DISTRIBUTERD_KV_ROLE and set corresponding flags
 assert envs.VLLM_DISTRIBUTED_KV_ROLE in [None, "producer", "consumer", "both"],\

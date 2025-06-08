@@ -62,6 +62,7 @@ def is_sccache_available() -> bool:
 
 
 def is_ccache_available() -> bool:
+    return False
     return which("ccache") is not None
 
 
