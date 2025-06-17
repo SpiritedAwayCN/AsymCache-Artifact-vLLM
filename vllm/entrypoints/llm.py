@@ -1467,7 +1467,7 @@ class LLM:
             tokenization_kwargs=tokenization_kwargs,
             prompt_adapter_request=prompt_adapter_request,
             priority=priority,
-            slo_urgent=slo_urgent,
+            # slo_urgent=slo_urgent,
         )
 
     def _add_guided_params(

@@ -101,9 +101,9 @@ llm = LLM(
     disable_log_stats=False,
     enforce_eager=False,
     enable_chunked_prefill=False,
-    # max_model_len=10000,
+    max_model_len=10000,
     # num_gpu_blocks_override=24,
-    max_model_len=24*64,
+    # max_model_len=24*64,
     # max_model_len=211008,
     block_size=64,
 )
