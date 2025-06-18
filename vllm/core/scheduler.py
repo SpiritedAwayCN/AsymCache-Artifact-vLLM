@@ -458,6 +458,9 @@ class Scheduler:
                 or self.cache_config.is_attention_free):
             version = "placeholder"
 
+        logger.info(
+            f"Using block space manager version: {version} "
+            f"for cache config: {self.cache_config}")
         BlockSpaceManagerImpl = BlockSpaceManager.get_block_space_manager_class(
             version)
 

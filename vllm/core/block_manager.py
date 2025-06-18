@@ -165,6 +165,9 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
                                  extra_hash=extra_hash)
             
             # Modified by SpiritedAwayCN
+            segment_status = 0
+            first_compute_start = -1
+            
             for logical_idx, block in enumerate(block_table._blocks._blocks):
                 if block.computed:
                     if segment_status == 1:
@@ -179,7 +182,7 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
                     seq.suffix_computed_block_locs[1] = logical_idx
                 elif segment_status == 0:
                     segment_status = 1
-                    fitst_compute_start = logical_idx
+                    first_compute_start = logical_idx
                 elif segment_status == 4:
                     segment_status = 5
                     seq.suffix_computed_block_locs[3] = logical_idx
@@ -197,7 +200,9 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
                 real_total_count = block_table[seq.suffix_computed_block_locs[3]].total_count
                 for block in block_table._blocks._blocks[seq.suffix_computed_block_locs[2]:seq.suffix_computed_block_locs[3]]:
                     block.total_count = real_total_count
-
+            
+            if first_compute_start == -1:
+                first_compute_start = logical_idx
                 
             seq.suffix_computed_block_locs[0] *= self.block_size
             seq.suffix_computed_block_locs[1] *= self.block_size
@@ -206,11 +211,12 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
             
             logger.info(f"seq: {seq}, "
                         f"suffix_computed_block_locs: {seq.suffix_computed_block_locs}, "
-                        f"first_compute_start: {fitst_compute_start * self.block_size}")
+                        f"first_compute_start: {first_compute_start * self.block_size}")
 
         return block_table
 
-    def allocate(self, seq_group: SequenceGroup) -> None:
+    def allocate(self, seq_group: SequenceGroup, blocks_to_offload: List[Tuple[int, int, bool]]) -> None:
+        # TODO: sca support for encoder-decoder sequences
 
         # Allocate self-attention block tables for decoder sequences
         waiting_seqs = seq_group.get_seqs(status=SequenceStatus.WAITING)
@@ -284,7 +290,9 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
         self,
         seq: Sequence,
         num_lookahead_slots: int,
+        blocks_to_offload: List[Tuple[int, int, bool]] = None,
     ) -> List[Tuple[int, int]]:
+        # TODO: sca support for cpu offloading
 
         block_table = self.block_tables[seq.seq_id]
 

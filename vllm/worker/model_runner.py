@@ -1902,8 +1902,8 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         if num_steps > 1:
             raise ValueError("num_steps > 1 is not supported in ModelRunner")
         
-        if self.guard_thread is None and self.need_send_kv(model_input, kv_caches):
-            self.launch_guarding_thread(kv_caches)
+        # if self.guard_thread is None and self.need_send_kv(model_input, kv_caches):
+        #     self.launch_guarding_thread(kv_caches)
         
         if self.lora_config:
             assert model_input.lora_requests is not None

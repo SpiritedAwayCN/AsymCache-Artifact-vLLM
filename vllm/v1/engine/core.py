@@ -101,6 +101,9 @@ class EngineCore:
                 "This scheduler interface is not public and "
                 "compatibility may not be maintained.",
                 vllm_config.scheduler_config.scheduler_cls)
+        
+        logger.info("Using scheduler class %s",
+                    vllm_config.scheduler_config.scheduler_cls)
 
         self.scheduler: SchedulerInterface = Scheduler(
             vllm_config=vllm_config,

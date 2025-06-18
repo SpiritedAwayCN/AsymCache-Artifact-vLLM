@@ -43,7 +43,7 @@ from vllm.sequence import IntermediateTensors
 import threading
 logger = init_logger(__name__)
 from vllm.core.block_manager_v1 import BlockSpaceManagerV1
-# from vllm.core.block_manager_v2 import BlockSpaceManagerV2
+from vllm.core.block_manager import BlockSpaceManager
 from vllm.worker.CacheGuardLayerState import CacheGuardLayerState
 # check VLLM_DISTRIBUTERD_KV_ROLE and set corresponding flags
 assert envs.VLLM_DISTRIBUTED_KV_ROLE in [None, "producer", "consumer", "both"],\
@@ -63,14 +63,15 @@ DISTRIBUTED_DEVICE: str = "cpu" if (IS_KV_PRODUCER
                                     and IS_KV_CONSUMER) else "cuda"
 
 # import c_buffer
-module_directory = os.environ.get("CBUFFER_DIR", None)
-if module_directory is None:
-    logger.error("CBUFFER_DIR environment variable not set")
-else:
-    logger.info(f"Using CBUFFER_DIR: {module_directory}")
-sys.path.append(module_directory)
-from c_buffer import UniqueId
-from c_buffer import c_buffer
+# TODO: Disabled this part
+# module_directory = os.environ.get("CBUFFER_DIR", None)
+# if module_directory is None:
+#     logger.error("CBUFFER_DIR environment variable not set")
+# else:
+#     logger.info(f"Using CBUFFER_DIR: {module_directory}")
+# sys.path.append(module_directory)
+# from c_buffer import UniqueId
+# from c_buffer import c_buffer
 
 class KV_transfer_agent:
     """
@@ -535,7 +536,7 @@ class KV_transfer_agent:
         self, model_executable: torch.nn.Module,
         model_input: "ModelInputForGPUWithSamplingMetadata",
         kv_caches: List[torch.Tensor],
-        block_manager: Union[BlockSpaceManagerV1, BlockSpaceManagerV2]
+        block_manager: Union[BlockSpaceManagerV1, BlockSpaceManager]
     ) -> Tuple[Union[torch.Tensor, IntermediateTensors], bool,
                "ModelInputForGPUWithSamplingMetadata"]:
         
@@ -705,7 +706,7 @@ class KV_transfer_agent:
         self,
         model_executable: torch.nn.Module,
         kv_caches: List[torch.Tensor],
-        block_manager: Union[BlockSpaceManagerV1, BlockSpaceManagerV2],
+        block_manager: Union[BlockSpaceManagerV1, BlockSpaceManager],
         is_driver: bool,
         instance_group
     ) -> None:
@@ -886,7 +887,7 @@ class KV_transfer_agent:
         self, model_executable: torch.nn.Module,
         model_input: "ModelInputForGPUWithSamplingMetadata",
         kv_caches: List[torch.Tensor],
-        block_manager: Union[BlockSpaceManagerV1, BlockSpaceManagerV2]
+        block_manager: Union[BlockSpaceManagerV1, BlockSpaceManager]
     ) -> Tuple[Union[torch.Tensor, IntermediateTensors], bool, "ModelInputForGPUWithSamplingMetadata"]:
 
         bypass_model_exec = True

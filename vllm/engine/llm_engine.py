@@ -499,6 +499,8 @@ class LLMEngine:
         if envs.VLLM_USE_V1:
             from vllm.v1.engine.llm_engine import LLMEngine as V1LLMEngine
             engine_cls = V1LLMEngine
+        
+        logger.info(f'engine cls: {engine_cls.__name__}, env.VLLM_USE_V1: {envs.VLLM_USE_V1}')
 
         return engine_cls.from_vllm_config(
             vllm_config=vllm_config,

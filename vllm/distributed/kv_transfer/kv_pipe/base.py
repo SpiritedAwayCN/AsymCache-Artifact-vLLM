@@ -65,8 +65,8 @@ class KVPipeBase(ABC):
         """
         raise NotImplementedError
     
-    def send_tensor_list(self, tensors: List[torch.Tensor]) -> None:
+    def send_tensor_list(self, tensors: list[torch.Tensor]) -> None:
         raise NotImplementedError
 
-    def receive_tensor_list(self, num_tensors: Optional[int] = 5) -> List[Optional[torch.Tensor]]:
+    def receive_tensor_list(self, num_tensors: Optional[int] = 5) -> list[Optional[torch.Tensor]]:
         raise NotImplementedError

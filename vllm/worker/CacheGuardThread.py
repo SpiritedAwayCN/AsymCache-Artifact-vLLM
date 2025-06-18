@@ -5,7 +5,7 @@ import traceback
 from typing import Union, List, Tuple
 import vllm.distributed.kv_transfer.vllm_adapter as dist_kv
 from vllm.core.block_manager_v1 import BlockSpaceManagerV1
-from vllm.core.block_manager_v2 import BlockSpaceManagerV2
+from vllm.core.block_manager import BlockSpaceManager
 from vllm.distributed.kv_transfer.kv_pipe.torch_distributed_pipe import (
     TorchDistributedPipe)
 from vllm.distributed.parallel_state import get_tp_group
@@ -15,7 +15,7 @@ logger = init_logger(__name__)
 class CacheGuardThread:
     def __init__(self, 
                  kv_agent: dist_kv.KV_transfer_agent, 
-                 get_block_manager : Union[BlockSpaceManagerV1, BlockSpaceManagerV2], 
+                 get_block_manager : Union[BlockSpaceManagerV1, BlockSpaceManager], 
                  model_executable: torch.nn.Module, 
                  kv_caches: List[torch.Tensor],
                  is_driver: bool = True,
@@ -23,7 +23,7 @@ class CacheGuardThread:
         self.kv_agent = kv_agent  # KV transfer 代理
         self.cache = kv_caches
         self.model_executable : torch.nn.Module = model_executable  # 模型层对象
-        self.get_block_manager: Union[BlockSpaceManagerV1, BlockSpaceManagerV2] = get_block_manager  # 动态获取 block_manager 的引用
+        self.get_block_manager: Union[BlockSpaceManagerV1, BlockSpaceManager] = get_block_manager  # 动态获取 block_manager 的引用
         self.running = True  # 控制守护线程的状态
         self.lock = threading.Lock()  # 加锁保证缓存访问安全
         self.thread = threading.Thread(target=self.run, daemon=True)

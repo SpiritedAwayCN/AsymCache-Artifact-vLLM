@@ -510,8 +510,7 @@ class FlashAttentionMetadataBuilder(
             # Compute slot mapping.
             is_profile_run = is_block_tables_empty(block_tables)
             start_idx = compute_slot_mapping_start_idx(
-                is_prompt, query_len, context_len, self.sliding_window,
-                self.use_v2_block_manager)
+                is_prompt, query_len, context_len, self.sliding_window)
             
             if inter_data.suffix_computed_block_locs is None or inter_data.suffix_computed_block_locs[1] <= 0:
                 # print('args of compute_slot_mapping',
