@@ -827,6 +827,10 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
         """If multi-modal data is given, add it to the input."""
         # NOTE: mm_kwargs only includes the subset of multi-modal items that
         # intersect with the current prefill positions.
+        
+        # logger.info(inter_data)
+        # logger.info(seq_group_metadata)
+        
         positions = inter_data.input_positions[0]
         mm_kwargs, placeholder_maps = MultiModalPlaceholderMap.from_seq_group(
             seq_group_metadata,

@@ -8,7 +8,8 @@ from vllm.core.block.block_table import BlockTable
 from vllm.core.block.cpu_gpu_block_allocator import CpuGpuBlockAllocator
 from vllm.core.block.interfaces import Block
 from vllm.core.block.prefix_caching_block import (ComputedBlocksTracker,
-                                                  LastAccessBlocksTracker)
+                                                  LastAccessBlocksTracker,
+                                                  PrefixCachingBlockAllocator)
 from vllm.core.block.utils import check_no_caching_or_swa_for_blockmgr_encdec
 from vllm.core.interfaces import AllocStatus, BlockSpaceManager
 from vllm.sequence import Sequence, SequenceGroup, SequenceStatus
@@ -187,19 +188,28 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
                     segment_status = 5
                     seq.suffix_computed_block_locs[3] = logical_idx
             
+            # TODO: move `total_count` to refcounter
             if segment_status == 2:
                 seq.suffix_computed_block_locs[1] = logical_idx
-            elif seq.suffix_computed_block_locs[0] > 0:
-                real_total_count = block_table[seq.suffix_computed_block_locs[1]].total_count
+            elif seq.suffix_computed_block_locs[0] > 0 and isinstance(self.block_allocator, PrefixCachingBlockAllocator):
+                blk = block_table._blocks._blocks[seq.suffix_computed_block_locs[1]]
+                blk = self.block_allocator._block_tracker[blk.block_id]
+                
                 for block in block_table._blocks._blocks[seq.suffix_computed_block_locs[0]:seq.suffix_computed_block_locs[1]]:
-                    block.total_count = real_total_count
+                    tgt_blk = self.block_allocator._block_tracker[block.block_id]
+                    tgt_blk.total_count = blk.total_count
+                    tgt_blk.last_accessed = blk.last_accessed
             
             if segment_status == 4:
                 seq.suffix_computed_block_locs[3] = logical_idx
             elif seq.suffix_computed_block_locs[2] > 0:
-                real_total_count = block_table[seq.suffix_computed_block_locs[3]].total_count
+                blk = block_table._blocks._blocks[seq.suffix_computed_block_locs[3]]
+                blk = self.block_allocator._block_tracker[blk.block_id]
+                
                 for block in block_table._blocks._blocks[seq.suffix_computed_block_locs[2]:seq.suffix_computed_block_locs[3]]:
-                    block.total_count = real_total_count
+                    tgt_blk = self.block_allocator._block_tracker[block.block_id]
+                    tgt_blk.total_count = blk.total_count
+                    tgt_blk.last_accessed = blk.last_accessed
             
             if first_compute_start == -1:
                 first_compute_start = logical_idx
@@ -363,7 +373,7 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
         self.block_allocator.mark_blocks_as_computed([])
 
     def get_common_computed_block_ids(
-            self, seqs: List[Sequence]) -> GenericSequence[int]:
+            self, seqs: List[Sequence], firstseg_only: bool = False) -> GenericSequence[int]:
         """Determine which blocks for which we skip prefill.
 
         With prefix caching we can skip prefill for previously-generated blocks.
@@ -377,7 +387,7 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
         for seq in seqs:
             all_blocks = self.block_tables[seq.seq_id].physical_block_ids
             num_cached_tokens = (
-                self._computed_blocks_tracker.get_num_cached_tokens(seq))
+                self._computed_blocks_tracker.get_num_cached_tokens(seq, firstseg_only=firstseg_only))
             assert num_cached_tokens % self.block_size == 0
             num_cached_blocks = num_cached_tokens // self.block_size
             computed_block_ids = all_blocks[:num_cached_blocks]

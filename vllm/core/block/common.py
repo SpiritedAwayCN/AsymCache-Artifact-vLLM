@@ -3,12 +3,19 @@
 from collections import deque
 from dataclasses import dataclass
 from typing import Deque, Dict, Iterable, List, Optional, Protocol, Tuple
+import os
 
 from vllm.core.block.interfaces import Block, BlockAllocator
 
 BlockId = int
 RefCount = int
 
+_half_life = os.environ.get('HALF_LIFE')
+try:
+    HALF_LIFE = float(_half_life)
+except Exception:
+    HALF_LIFE = 100
+BASE_FREQ: float = 0.5**(1/HALF_LIFE)
 
 class RefCounterProtocol(Protocol):
 

@@ -7,7 +7,7 @@ from typing import (Callable, Dict, FrozenSet, Iterable, List, Optional, Set,
                     Tuple)
 
 from vllm.core.block.common import (CacheMetricData, CopyOnWriteTracker,
-                                    get_all_blocks_recursively)
+                                    get_all_blocks_recursively, BASE_FREQ)
 from vllm.core.block.interfaces import (Block, BlockAllocator, BlockId, Device,
                                         DeviceAwareBlockAllocator)
 from vllm.core.block.naive_block import (BlockPool, NaiveBlock,
@@ -29,11 +29,12 @@ logger = init_logger(__name__)
 class BlockTracker:
     """Used to track the status of a block inside the prefix caching allocator
     """
-    __slots__ = ("active", "last_accessed", "computed")
+    __slots__ = ("active", "last_accessed", "computed", "total_count")
 
     def reset(self):
         self.last_accessed: float = _DEFAULT_LAST_ACCESSED_TIME
         self.computed: bool = False
+        self.total_count: Optional[float] = 0
 
     def __init__(self):
         self.active: bool = False
@@ -130,6 +131,10 @@ class PrefixCachingBlockAllocator(BlockAllocator):
             refcounter=self._refcounter.as_readonly())
 
         self.metric_data = CacheMetricData()
+        
+        # MODIFIED: used for testing purposes
+        self.test_force_nocache_begin = -1
+        self.test_force_nocache_end = -1
 
     def _create_block(
         self,
@@ -182,10 +187,14 @@ class PrefixCachingBlockAllocator(BlockAllocator):
 
         cached_block_id = self._cached_blocks.get(block.content_hash, None)
         if cached_block_id is not None:
-            self.metric_data.query(hit=True)
-            block.block_id = cached_block_id
-            self._incr_refcount_cached_block(block)
-            return block
+            if self.test_force_nocache_begin < block.num_tokens_total <= self.test_force_nocache_end:
+                # MODIFIED: force ignored cache
+                self._cached_blocks.pop(block.content_hash)
+            else:
+                self.metric_data.query(hit=True)
+                block.block_id = cached_block_id
+                self._incr_refcount_cached_block(block)
+                return block
         self.metric_data.query(hit=False)
         self._block_pool.free_block(block)
 
@@ -247,10 +256,16 @@ class PrefixCachingBlockAllocator(BlockAllocator):
         refcount = self._refcounter.incr(block_id)
         if refcount == 1:
             # In case a cached block was evicted, restore its tracking
+            last_accessed, total_count = None, None
             if block_id in self.evictor:
-                self.evictor.remove(block_id)
+                block_metadata = self.evictor.remove(block_id)
+                last_accessed = block_metadata.last_accessed
+                total_count = block_metadata.total_count
 
-            self._track_block_id(block_id, computed=True)
+            self._track_block_id(block_id, 
+                                 computed=True, 
+                                 last_accessed=last_accessed, 
+                                 total_count=total_count)
 
     def _decr_refcount_cached_block(self, block: Block) -> None:
         # Ensure this is immutable/cached block
@@ -272,7 +287,8 @@ class PrefixCachingBlockAllocator(BlockAllocator):
         # Add the cached block to the evictor
         # (This keeps the cached block around so it can be reused)
         self.evictor.add(block_id, block.content_hash, block.num_tokens_total,
-                         self._block_tracker[block_id].last_accessed)
+                         self._block_tracker[block_id].last_accessed,
+                         self._block_tracker[block_id].total_count)
 
         # Stop tracking the block
         self._untrack_block_id(block_id)
@@ -332,12 +348,17 @@ class PrefixCachingBlockAllocator(BlockAllocator):
         block_id, content_hash_to_evict = self.evictor.evict()
 
         # Sanity checks
-        assert content_hash_to_evict in self._cached_blocks
-        _block_id = self._cached_blocks[content_hash_to_evict]
-        assert self._refcounter.get(_block_id) == 0
-        assert _block_id == block_id
+        if content_hash_to_evict in self._cached_blocks:
+            
+            _block_id = self._cached_blocks[content_hash_to_evict]
+            assert self._refcounter.get(_block_id) == 0
+            assert _block_id == block_id
 
-        self._cached_blocks.pop(content_hash_to_evict)
+            self._cached_blocks.pop(content_hash_to_evict)
+        else:
+            logger.warning("Evictor evicted a block with content hash %s,which is not in the cached blocks. "
+                           "This should only happen when testing 2-seg Attention.")
+            assert self.test_force_nocache_begin != -1 or self.test_force_nocache_end != -1
 
         self._refcounter.incr(block_id)
         self._track_block_id(block_id, computed=False)
@@ -570,6 +591,8 @@ class PrefixCachingBlockAllocator(BlockAllocator):
 
         for block_id in block_ids:
             if self._block_tracker[block_id].active:
+                self._block_tracker[block_id].total_count *= BASE_FREQ ** (now - self._block_tracker[block_id].last_accessed)
+                self._block_tracker[block_id].total_count += 1
                 self._block_tracker[block_id].last_accessed = now
             elif block_id in self.evictor:
                 self.evictor.update(block_id, now)
@@ -584,10 +607,16 @@ class PrefixCachingBlockAllocator(BlockAllocator):
         self._touched_blocks.clear()
 
     def _track_block_id(self, block_id: Optional[BlockId],
-                        computed: bool) -> None:
+                        computed: bool,
+                        last_accessed: Optional[float] = None,
+                        total_count: Optional[float] = None) -> None:
         assert block_id is not None
         self._block_tracker[block_id].enable()
         self._block_tracker[block_id].computed = computed
+        if last_accessed is not None:
+            self._block_tracker[block_id].last_accessed = last_accessed
+        if total_count is not None:
+            self._block_tracker[block_id].total_count = total_count
 
     def _untrack_block_id(self, block_id: Optional[BlockId]) -> None:
         assert block_id is not None
@@ -776,7 +805,7 @@ class PrefixCachingBlock(Block):
         self._last_accessed: float = _DEFAULT_LAST_ACCESSED_TIME
         self._computed = computed
         self._extra_hash = extra_hash
-        self._total_count: Optional[float] = 0
+        # self._total_count: Optional[float] = 0
 
         # On the first time, we create the block object, and next we only
         # reinitialize it
@@ -862,13 +891,13 @@ class PrefixCachingBlock(Block):
     def block_id(self, value) -> None:
         self._block.block_id = value
     
-    @property
-    def total_count(self) -> Optional[float]:
-        return self._total_count
+    # @property
+    # def total_count(self) -> Optional[float]:
+    #     return self._total_count
     
-    @total_count.setter
-    def total_count(self, value: Optional[float]) -> None:
-        self._total_count = value
+    # @total_count.setter
+    # def total_count(self, value: Optional[float]) -> None:
+    #     self._total_count = value
 
     @property
     def is_full(self) -> bool:
@@ -1054,7 +1083,7 @@ class ComputedBlocksTracker:
 
         self._seq_id_to_blocks_hashes[seq.seq_id] = block_hashes_recorded
 
-    def get_num_cached_tokens(self, seq: Sequence) -> int:
+    def get_num_cached_tokens(self, seq: Sequence, firstseg_only: bool = False) -> int:
         if not self._enable_caching:
             return 0
 
@@ -1079,6 +1108,16 @@ class ComputedBlocksTracker:
             return num_computed_tokens_prev
 
         block_hashes = self._seq_id_to_blocks_hashes[seq.seq_id]
+        logger.info("seq_id %d has suffix_computed_block_locs %s",
+                    seq.seq_id, seq.suffix_computed_block_locs)
+        if firstseg_only and seq.suffix_computed_block_locs is not None and seq.suffix_computed_block_locs[0] > 0:
+            # If the sequence has a suffix computed block, we only consider
+            # the blocks before the suffix computed block.
+            # This is because the suffix computed block is not part of the
+            # prefix caching.
+            logger.info("truncating block hashes for seq_id %d to %d blocks",
+                        seq.seq_id, seq.suffix_computed_block_locs[0] // self._block_size)
+            block_hashes = block_hashes[:(seq.suffix_computed_block_locs[0] // self._block_size)]
 
         # This is O(logN), where N is the number of blocks.
         num_cached_blocks = len(

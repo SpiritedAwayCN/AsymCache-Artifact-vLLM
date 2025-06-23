@@ -1610,9 +1610,11 @@ class Scheduler:
                 self.block_manager.access_all_blocks_in_seq(seq, now)
 
             if self.cache_config.enable_prefix_caching:
+                logger.debug('before get_common_computed_block_ids')
                 common_computed_block_nums = (
                     self.block_manager.get_common_computed_block_ids(
-                        seq_group.get_seqs(status=SequenceStatus.RUNNING)))
+                        seq_group.get_seqs(status=SequenceStatus.RUNNING), firstseg_only=True))
+                logger.debug(f'common_computed_block_nums: {common_computed_block_nums}.')
 
             do_sample = True
             is_prompt = seq_group.is_prefill()
