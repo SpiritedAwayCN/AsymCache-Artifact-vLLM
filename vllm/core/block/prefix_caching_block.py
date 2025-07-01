@@ -1098,7 +1098,7 @@ class ComputedBlocksTracker:
 
         # TODO(rickyx): This hack could be removed once we mark blocks as
         # computed correctly with chunked prefills.
-        if num_computed_tokens_prev is not None and seq.is_prefill():
+        if num_computed_tokens_prev is not None and seq.is_prefill() and not firstseg_only:
             # For a sequence that is still in prefill, we don't
             # recompute the number of cached tokens.
             # This also handles correctly chunked prefill since currently
@@ -1108,9 +1108,9 @@ class ComputedBlocksTracker:
             return num_computed_tokens_prev
 
         block_hashes = self._seq_id_to_blocks_hashes[seq.seq_id]
-        logger.info("seq_id %d has suffix_computed_block_locs %s",
-                    seq.seq_id, seq.suffix_computed_block_locs)
-        if firstseg_only and seq.suffix_computed_block_locs is not None and seq.suffix_computed_block_locs[0] > 0:
+        # logger.info("seq_id %d has suffix_computed_block_locs %s",
+        #             seq.seq_id, seq.suffix_computed_block_locs)
+        if seq.is_prefill() and firstseg_only and seq.suffix_computed_block_locs is not None and seq.suffix_computed_block_locs[0] > 0:
             # If the sequence has a suffix computed block, we only consider
             # the blocks before the suffix computed block.
             # This is because the suffix computed block is not part of the

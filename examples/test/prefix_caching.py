@@ -113,8 +113,8 @@ block_allocator = block_manager.block_allocator._allocators[Device.GPU]
 # print(block_manager.__class__.__name__)
 # # exit(0)
 
-# block_allocator.test_force_nocache_begin = 64
-# block_allocator.test_force_nocache_end = 256
+block_allocator.test_force_nocache_begin = 64
+block_allocator.test_force_nocache_end = 256
 
 sampling_params = SamplingParams(temperature=0, max_tokens=10)
 

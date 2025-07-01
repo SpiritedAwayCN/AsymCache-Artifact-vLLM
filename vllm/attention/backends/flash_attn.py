@@ -30,7 +30,8 @@ from vllm.logger import init_logger
 from vllm.multimodal import MultiModalPlaceholderMap
 from vllm.utils import async_tensor_h2d, make_tensor_with_pad
 from vllm.vllm_flash_attn import (flash_attn_varlen_func,
-                                  flash_attn_with_kvcache)
+                                  flash_attn_with_kvcache,
+                                  flash_attn_varlen_2seg_func)
 
 if TYPE_CHECKING:
     from vllm.worker.model_runner import (ModelInputForGPUBuilder,
@@ -687,12 +688,14 @@ class FlashAttentionMetadataBuilder(
                 num_prefill_tokens=self.num_prefill_tokens,
                 num_decode_tokens=num_decode_tokens,
                 seq_lens=seq_lens,
+                multi_modal_placeholder_index_maps=placeholder_index_maps,
+                enable_kv_scales_calculation=True,
                 seq_lens_tensor=seq_lens_tensor,
                 max_query_len=max_query_len,
-                decode_query_len=decode_query_len,
+                max_decode_query_len=max_decode_query_len,
                 max_prefill_seq_len=max_prefill_seq_len,
                 max_decode_seq_len=max_decode_seq_len,
-                query_start_loc=query_start_loc,
+                query_start_loc=query_start_loc_tensor,
                 seq_start_loc=seq_start_loc,
                 context_lens_tensor=context_lens_tensor,
                 block_tables=block_tables,
@@ -979,9 +982,12 @@ class FlashAttentionImpl(AttentionImpl):
                 assert prefill_meta.query_start_loc is not None
                 max_seq_len = max(prefill_meta.seq_lens)
                 
+                descale_shape = (prefill_meta.query_start_loc.shape[0] - 1,
+                                key.shape[1])
+                
                 if prefill_meta.seq_lens_firstseg is None:
-                    descale_shape = (prefill_meta.query_start_loc.shape[0] - 1,
-                                    key.shape[1])
+                    logger.info(prefill_meta)
+                    
                     flash_attn_varlen_func(  # noqa
                         q=query,
                         k=key_cache,
@@ -1005,14 +1011,17 @@ class FlashAttentionImpl(AttentionImpl):
                 else:
                     force_kBlockM = 64
                     
-                    flash_attn_varlen_func(  # noqa
+                    # logger.info(prefill_meta)
+                    
+                    flash_attn_varlen_2seg_func(  # noqa
                         q=query,
                         k=key_cache,
                         v=value_cache,
                         cu_seqlens_q=prefill_meta.query_start_loc,
                         max_seqlen_q=prefill_meta.max_query_len,
-                        seqused_k=prefill_meta.seq_lens_tensor,
+                        cu_seqlens_k=prefill_meta.seq_lens_tensor,
                         max_seqlen_k=max_seq_len,
+                        seqused_k=prefill_meta.seq_used_k,
                         softmax_scale=softmax_scale,
                         causal=True,
                         window_size=window_size,
