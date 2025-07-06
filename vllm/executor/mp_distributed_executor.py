@@ -13,6 +13,8 @@ from vllm.executor.multiproc_worker_utils import (
 from vllm.logger import init_logger
 from vllm.model_executor.layers.sampler import SamplerOutput
 from vllm.sequence import ExecuteModelRequest
+from vllm.core.block_manager import BlockSpaceManager
+from vllm.core.block_manager_v1 import BlockSpaceManagerV1
 from vllm.utils import (_run_task_with_lock, cuda_device_count_stateless,
                         get_distributed_init_method, get_ip, get_open_port,
                         make_async, run_method, update_environment_variables)
@@ -71,7 +73,7 @@ class MultiprocessingDistributedExecutor(DistributedExecutorBase):
         # 127.0.0.1 for communication.
         distributed_init_method = get_distributed_init_method(
             "127.0.0.1",
-            get_open_port(force=dist_kv.IS_DISTRIBUTED_KV_INSTANCE))
+            get_open_port())
 
         self.workers: List[ProcessWorkerWrapper] = []
         # This is the list of workers that are rank 0 of each TP group EXCEPT
@@ -135,7 +137,7 @@ class MultiprocessingDistributedExecutor(DistributedExecutorBase):
             worker_monitor.close()
 
     def _driver_execute_model(
-        self, execute_model_req: Optional[ExecuteModelRequest], block_manager: Optional[Union[BlockSpaceManagerV1, BlockSpaceManagerV2]] = None
+        self, execute_model_req: Optional[ExecuteModelRequest], block_manager: Optional[Union[BlockSpaceManagerV1, BlockSpaceManager]] = None
     ) -> Optional[List[SamplerOutput]]:
         """Run execute_model in the driver worker.
 

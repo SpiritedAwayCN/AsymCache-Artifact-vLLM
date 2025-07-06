@@ -1416,7 +1416,7 @@ class LLMEngine:
 
             try:
                 outputs = self.model_executor.execute_model(
-                    execute_model_req=execute_model_req,block_manager=block_manager)
+                    execute_model_req=execute_model_req)
                 self._skip_scheduling_next_step = False
             except InputProcessingError as e:
                 # The input for this request cannot be processed, so we must

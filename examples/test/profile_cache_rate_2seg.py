@@ -9,7 +9,7 @@ assert sys.argv[1] in ['1k', '10k'], f'Invalid argument, got {sys.argv[1]}'
 OUTPUT_DIR = './examples/test/output/'
 
 llm = LLM(
-    model='meta-llama/Meta-Llama-3.1-8B-Instruct',
+    model='LargeWorldModel/LWM-Text-1M',
     enable_prefix_caching=True,
     tensor_parallel_size=1,
     disable_log_stats=False,
