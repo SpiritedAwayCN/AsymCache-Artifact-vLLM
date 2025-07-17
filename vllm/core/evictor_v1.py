@@ -300,7 +300,7 @@ class LFUEvictor(Evictor):
 class WeightEvictor(Evictor):
 
     def __init__(self, base, delta_func):
-        logger.info(f"[rank {torch.distributed.get_rank()}]  {self.__class__.__name__} is used, base is {base}.")
+        # logger.info(f"[rank {torch.distributed.get_rank()}]  {self.__class__.__name__} is used, base is {base}.")
         # self.delta(len) ---> delta_T
         self.delta = delta_func
         # block_hash ---> (block, weight)

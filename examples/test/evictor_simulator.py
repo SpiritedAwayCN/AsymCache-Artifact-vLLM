@@ -17,10 +17,9 @@ from vllm.engine.arg_utils import EngineArgs
 from vllm.entrypoints.chat_utils import (apply_hf_chat_template,
                                          parse_chat_messages)
 from vllm.inputs import TextPrompt, TokensPrompt
-from vllm.transformers_utils.tokenizer_group import (
-    BaseTokenizerGroup, init_tokenizer_from_configs)
+from vllm.transformers_utils.tokenizer_group import init_tokenizer_from_configs
 
-TP = 4
+TP = 1
 block_size = 64
 
 model = "meta-llama/Meta-Llama-3.1-8B-Instruct"
@@ -59,7 +58,7 @@ model_config = engine_config.model_config
 tokenizer = init_tokenizer_from_configs(
                 model_config=engine_config.model_config,
                 scheduler_config=engine_config.scheduler_config,
-                parallel_config=engine_config.parallel_config,
+                # parallel_config=engine_config.parallel_config,
                 enable_lora=bool(engine_config.lora_config)).tokenizer
 
 
@@ -76,7 +75,7 @@ def simulate_allocate_block(msgs):
     assert msgs[-1]['role'] == 'assistant'
     
     conversation, _ = parse_chat_messages(
-                msgs[:-1], model_config, tokenizer)
+                msgs[:-1], model_config, tokenizer, content_format="string")
     # print(msgs, conversation)
     prompt_data = apply_hf_chat_template(
                     tokenizer,
@@ -84,6 +83,8 @@ def simulate_allocate_block(msgs):
                     chat_template=None,
                     add_generation_prompt=True,
                     continue_final_message=False,
+                    model_config=model_config,
+                    tools=None,
                 )
     if is_list_of(prompt_data, int):
         raise ValueError("Tokenized prompt not supported")
@@ -102,6 +103,7 @@ def simulate_allocate_block(msgs):
                    inputs={
                        "prompt": prompt,
                        "prompt_token_ids": prompt_token_ids,
+                       "type": "token",
                    },
                    block_size=block_size,
                    eos_token_id=tokenizer.eos_token_id,
@@ -114,7 +116,7 @@ def simulate_allocate_block(msgs):
     )
     
     # Allocate
-    block_manager.allocate(seq_group)
+    block_manager.allocate(seq_group, blocks_to_offload=[])
     for seq in seq_group.get_seqs(status=SequenceStatus.WAITING):
         seq.status = SequenceStatus.RUNNING
     block_manager.access_all_blocks_in_seq(seq, arrival_time + 10)

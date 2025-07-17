@@ -1086,3 +1086,9 @@ class BlockSpaceManagerV1(BlockSpaceManager):
         if device == Device.CPU:
             return self.cpu_allocator.get_prefix_cache_hit_rate()
         raise ValueError(f"Invalid device: {device}")
+
+    def get_num_cached_tokens(self, seq: Sequence) -> int:
+        raise NotImplementedError
+    
+    def reset_prefix_cache(self, device: Optional[Device] = None) -> bool:
+        raise NotImplementedError
