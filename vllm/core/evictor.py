@@ -91,6 +91,7 @@ class LRUEvictor(Evictor):
     def __init__(self):
         self.free_table: Dict[int, BlockMetaData] = {}
         self.priority_queue = []
+        self.protect_blocks = set()
 
     def __contains__(self, block_id: int) -> bool:
         return block_id in self.free_table
@@ -116,6 +117,13 @@ class LRUEvictor(Evictor):
 
     def add(self, block_id: int, content_hash: int, num_hashed_tokens: int,
             last_accessed: float, total_count: Optional[float] = None):
+        import os
+        if os.getenv('EVCITOR_BLOCK_PROTECT_FLAG') == '1':
+            print("protect in evictor")
+            self.protect_blocks.add(content_hash)
+        if content_hash in self.protect_blocks:
+            # print("A protect block added.")
+            last_accessed = -1e5
         self.free_table[block_id] = BlockMetaData(content_hash,
                                                   num_hashed_tokens,
                                                   last_accessed)
@@ -229,6 +237,7 @@ class WeightEvictor(Evictor):
 
 def make_evictor(eviction_policy: EvictionPolicy) -> Evictor:
     if eviction_policy == EvictionPolicy.LRU:
+        print("evictor:LRU")
         return LRUEvictor()
     elif eviction_policy == EvictionPolicy.MWF:
         from vllm.core.block.common import BASE_FREQ

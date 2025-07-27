@@ -9,18 +9,20 @@ assert sys.argv[1] in ['1k', '5k', '10k', '20k', '40k', '80k'], f'Invalid argume
 START_TOKEN = int(sys.argv[2])
 assert START_TOKEN % 16 == 0, f'Invalid argument, got {START_TOKEN}'
 
-OUTPUT_DIR = './examples/test/output-llama/'
-model = "meta-llama/Meta-Llama-3.1-8B-Instruct"
+OUTPUT_DIR = './examples/test/output/'
+model = "LargeWorldModel/LWM-Text-1M"
 # model="LargeWorldModel/LWM-Text-1M"
-
+os.environ['EVCITOR_BLOCK_PROTECT_FLAG'] = '0'
 llm = LLM(
     model=model,
     enable_prefix_caching=True,
     tensor_parallel_size=4,
     disable_log_stats=False,
-    collect_detailed_traces='all',
+    collect_detailed_traces=['all'],
     enable_chunked_prefill=False,
     max_model_len=211008,
+    block_size=64,
+    dtype='float16'
 )
 block_manager = llm.llm_engine.scheduler[0].block_manager
 print(block_manager.__class__.__name__)
@@ -63,14 +65,18 @@ target_input_ids = [BASE_TOKEN_ID] * (TOTAL_LENGTH - POST_TOKEN)
 f = open(os.path.join(OUTPUT_DIR, f'profile_{sys.argv[1]}-s{START_TOKEN}-tp4.csv'), 'w')
 f.write('cached_length,' + ','.join([f'p{i+1}' for i in range(MAX_TRY)]))
 f.write(',AVG\n')
+
+os.environ['EVCITOR_BLOCK_PROTECT_FLAG'] = '1'
+
 llm.generate(None, 
             sampling_params=sampling_params,
             prompt_token_ids=target_input_ids,
             use_tqdm=False,
             slo_urgents=2.0) # slo_urgent=2.0 means that the token is not evicted
+os.environ['EVCITOR_BLOCK_PROTECT_FLAG'] = '0'
 
-
-block_manager.test_ignore_cache_block_start = START_TOKEN // block_manager.block_size - 1
+# block_manager.test_ignore_cache_block_start = START_TOKEN // block_manager.block_size - 1
+block_manager.test_force_nocache_begin = START_TOKEN
 
 trange_obj = trange(TOTAL_LENGTH - POST_TOKEN,  START_TOKEN, -16)
 # output_lines = []
@@ -80,14 +86,15 @@ for i, cached_length in enumerate(trange_obj):
     output_stdout = str(cached_length) + ','
     
     results = []
-    block_manager.test_ignore_cache_block_num = \
-        (TOTAL_LENGTH - POST_TOKEN - cached_length) // block_manager.block_size
-    
-    if block_manager.test_ignore_cache_block_num % 4 != 0:
-        continue       
+    # block_manager.test_ignore_cache_block_num = \
+        # (TOTAL_LENGTH - POST_TOKEN - cached_length) // block_manager.block_size
+    block_manager.test_force_nocache_end = TOTAL_LENGTH - POST_TOKEN - cached_length + START_TOKEN
 
-    print(f'block_manager.test_ignore_cache_block_num: {block_manager.test_ignore_cache_block_num}')
-    print(f'block_manager.test_ignore_cache_block_start: {block_manager.test_ignore_cache_block_start}')
+    # if block_manager.test_ignore_cache_block_num % 4 != 0:
+    #     continue       
+
+    print(f'block_manager.test_force_nocache_end: {block_manager.test_force_nocache_end}')
+    print(f'block_manager.test_force_nocache_begin: {block_manager.test_force_nocache_begin}')
     for j in range(MAX_TRY):
         input_ids = target_input_ids + [(i * MAX_TRY + j) % 20000 + 5] * POST_TOKEN
         with torch.cuda.nvtx.range(f'cache_len={cached_length},try={j}'):
