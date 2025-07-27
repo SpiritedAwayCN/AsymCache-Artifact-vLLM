@@ -123,7 +123,8 @@ class LRUEvictor(Evictor):
             self.protect_blocks.add(content_hash)
         if content_hash in self.protect_blocks:
             # print("A protect block added.")
-            last_accessed = -1e5
+            # print(f'time={last_accessed}')
+            last_accessed = 1e25
         self.free_table[block_id] = BlockMetaData(content_hash,
                                                   num_hashed_tokens,
                                                   last_accessed)
