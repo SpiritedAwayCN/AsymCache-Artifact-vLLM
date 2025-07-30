@@ -17,7 +17,7 @@ from transformers import (
 
 BASE_DIR = '/home/pkuhetu/sca/dataset/LEval'
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
-API_URL = 'http://localhost:8047/v1/completions'
+API_URL = 'http://162.105.146.217:8047/v1/completions'
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--div', '-d', type=int, default=80)
