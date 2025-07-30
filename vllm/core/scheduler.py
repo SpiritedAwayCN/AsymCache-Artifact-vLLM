@@ -1116,6 +1116,7 @@ class Scheduler:
                 leftover_waiting_sequences.appendleft(seq_group)
                 waiting_queue.popleft()
                 continue
+            # TODO: (Chunan) support multi-segment prefill
             num_new_tokens_uncached, num_new_tokens_cached = (
                 self._get_num_new_uncached_and_cached_tokens(
                     seq_group,
@@ -1610,7 +1611,8 @@ class Scheduler:
                 self.block_manager.access_all_blocks_in_seq(seq, now)
 
             if self.cache_config.enable_prefix_caching:
-                logger.debug('before get_common_computed_block_ids')
+                # TODO(chunan): use seq.first_seg_cache instead, since it will update at the
+                # end of each step, 
                 common_computed_block_nums = (
                     self.block_manager.get_common_computed_block_ids(
                         seq_group.get_seqs(status=SequenceStatus.RUNNING), firstseg_only=True))
@@ -1670,6 +1672,7 @@ class Scheduler:
                     prompt_adapter_request=seq_group.prompt_adapter_request,
                 )
             else:
+                logger.warning("Multi-segment cache is not supported for delta metadata mode.")
                 # When SPMD mode is enabled, we only send delta data except for
                 # the first request to reduce serialization cost.
                 seq_data_delta = {}

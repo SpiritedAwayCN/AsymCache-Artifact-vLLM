@@ -678,6 +678,7 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
             seq_idx]].update_num_cached_tokens(prefix_cache_len)
 
         # The number of so far computed prompt tokens in this sequence.
+        # context_len: in chunked-prefill case, this is the sum of lengths of computed chunks
         context_len = inter_data.context_lens[seq_idx]
         # The total number of prompt tokens in this sequence.
         # When chunked prefill is enabled, this is the token number of
@@ -689,6 +690,9 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
             pass
         elif has_2_segments or context_len < prefix_cache_len < seq_len:
             # Partial hit. Compute the missing part.
+            
+            # TODO(chunan): for chunked prefill, should handle when seq_len < suffix_computed_block_locs
+            # because the seq_len is the length from beginning to the end of the current chunk.
             
             uncomputed_start = prefix_cache_len - context_len
             context_len = prefix_cache_len
