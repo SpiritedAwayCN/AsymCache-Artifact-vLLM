@@ -944,6 +944,11 @@ class SequenceGroup:
         for seq in self.seqs:
             if not seq.is_finished():
                 seq.data.update_num_computed_tokens(num_new_computed_tokens)
+                # TODO(chunan): Update seq.data.suffix_computed_block_locs and first_computed_start
+                # since the computed chunk may reduce the number of segments
+        
+        # TODO(chunan): Update the self.suffix_computed_block_locs, using the first_seq
+        # self.suffix_computed_block_locs = self.first_seq.data.suffix_computed_block_locs
 
     def get_num_uncomputed_tokens(self) -> int:
         num_uncomputed_tokens = 0
