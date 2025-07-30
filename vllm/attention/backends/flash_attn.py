@@ -41,6 +41,9 @@ from vllm.vllm_flash_attn import flash_attn_varlen_func as _flash_attn_varlen_fu
 from vllm.vllm_flash_attn import flash_attn_varlen_2seg_func as _flash_attn_varlen_2seg_func
 from vllm.vllm_flash_attn import flash_attn_with_kvcache as _flash_attn_with_kvcache
 
+import os
+use_pod_attn = os.getenv('VLLM_USE_POD_ATTN') == '1'
+
 logger = init_logger(__name__)
 
 class FlashAttentionBackend(AttentionBackend):
@@ -153,6 +156,8 @@ class FlashAttentionMetadata(AttentionMetadata):
 
     use_cuda_graph: bool
     
+    block_tables_list: Optional[List[List[int]]] = None
+
     # MODIFIED for second segment cache
     seq_lens_firstseg: Optional[List[int]] = None
     seq_lens_firstseg_tensor: Optional[torch.Tensor] = None
@@ -161,6 +166,9 @@ class FlashAttentionMetadata(AttentionMetadata):
     # context_lens_tensor2: Optional[torch.Tensor]
     seq_used_k: Optional[torch.Tensor] = None
     seq_used_k_2: Optional[torch.Tensor] = None
+    seqlens_q_block: Optional[torch.Tensor] = None,
+    seqused_k_block: Optional[torch.Tensor] = None,
+    blocks_in_batch: Optional[torch.Tensor] = None,
     # seq_start_loc2: Optional[torch.Tensor] = None
     # num_prefill_tokens_firstseg: int = 0
     # max_query_len2: int = 0
@@ -246,7 +254,8 @@ class FlashAttentionMetadata(AttentionMetadata):
                                self.context_lens_tensor[:self.num_prefills])
         block_tables = (None if self.block_tables is None else
                         self.block_tables[:self.num_prefills])
-
+        block_tables_list = (None if self.block_tables_list is None else
+                        self.block_tables_list[:self.num_prefills])
         self._cached_prefill_metadata = FlashAttentionMetadata(
             num_prefills=self.num_prefills,
             num_prefill_tokens=self.num_prefill_tokens,
@@ -265,6 +274,7 @@ class FlashAttentionMetadata(AttentionMetadata):
             seq_start_loc=seq_start_loc,
             context_lens_tensor=context_lens_tensor,
             block_tables=block_tables,
+            block_tables_list=block_tables_list,
             use_cuda_graph=False,
             seq_lens_firstseg=self.seq_lens_firstseg,
             seq_lens_firstseg_tensor=self.seq_lens_firstseg_tensor,
@@ -273,6 +283,9 @@ class FlashAttentionMetadata(AttentionMetadata):
             # context_lens_tensor2=None,
             seq_used_k=self.seq_used_k,
             seq_used_k_2=self.seq_used_k_2,
+            seqlens_q_block=self.seqlens_q_block,
+            seqused_k_block=self.seqused_k_block,
+            blocks_in_batch=self.blocks_in_batch,
             # seq_start_loc2=self.seq_start_loc2,
             # num_prefill_tokens_firstseg=self.num_prefill_tokens_firstseg,
             # max_query_len2=self.max_query_len2,
@@ -507,6 +520,7 @@ class FlashAttentionMetadataBuilder(
                     block_table = block_tables[seq_id][
                         -curr_sliding_window_block:]
             self.block_tables.append(block_table)
+            # print(f'append={block_table}, block_tables={self.block_tables}')
 
             # Compute slot mapping.
             is_profile_run = is_block_tables_empty(block_tables)
@@ -676,12 +690,31 @@ class FlashAttentionMetadataBuilder(
                                                 self.runner.pin_memory)
             seq_used_k_2_tensor = async_tensor_h2d(seq_used_k_2, torch.int, device,
                                                 self.runner.pin_memory)
-            # with open("/home/infer/chenyilei/usedk.txt", "a") as f:
-            #     f.write(f"seq_lens_firstseg: {query_lens_2}\n")
-            #     f.write(f"seq_lens_secondseg: {query_lens_3}\n")
-            #     f.write(f"seq_used_k: {seq_used_k}\n")
-            #     f.write(f"seq_used_k_2: {seq_used_k_2}\n\n")
-            # print('new meta builder', flush=True)
+            seqlens_q_block = None
+            seqused_k_block = None
+            blocks_in_batch = None
+            if self.num_prefills == 1:
+                kBlockM = 64
+                seqlens_q_block = []
+                seqused_k_block = []
+                num = (max_query_len - 1) // kBlockM + 1
+                for idx in range(num):
+                    loc = idx * kBlockM
+                    if loc < query_lens_2[0]:
+                        seqlens_q_block.append(query_lens_2[0])
+                        seqused_k_block.append(seq_used_k[0])
+                        print(f"seg2={query_lens_2[0]},{seq_used_k[0]}")
+                    elif loc < query_lens_2[0] + query_lens_3[0]:
+                        seqlens_q_block.append(query_lens_2[0] + query_lens_3[0])
+                        seqused_k_block.append(seq_used_k_2[0])
+                        print(f"seg3={query_lens_2[0] + query_lens_3[0]},{seq_used_k_2[0]}")
+                    else:
+                        seqlens_q_block.append(max_query_len)
+                        seqused_k_block.append(seq_lens[0])
+                        # print(f"^^={max_query_len},{seq_lens[0]}")
+                seqlens_q_block = async_tensor_h2d(seqlens_q_block, torch.int, device, self.runner.pin_memory)
+                seqused_k_block = async_tensor_h2d(seqused_k_block, torch.int, device, self.runner.pin_memory)
+                blocks_in_batch = async_tensor_h2d([0], torch.int, device, self.runner.pin_memory)
             return FlashAttentionMetadata(
                 num_prefills=self.num_prefills,
                 slot_mapping=slot_mapping_tensor,
@@ -699,6 +732,7 @@ class FlashAttentionMetadataBuilder(
                 seq_start_loc=seq_start_loc,
                 context_lens_tensor=context_lens_tensor,
                 block_tables=block_tables,
+                block_tables_list=self.block_tables,
                 use_cuda_graph=use_captured_graph,
                 seq_lens_firstseg=query_lens_2,
                 seq_lens_firstseg_tensor=seq_lens_firstseg_tensor,
@@ -706,8 +740,26 @@ class FlashAttentionMetadataBuilder(
                 seq_lens_secondseg_tensor=seq_lens_secondseg_tensor,
                 seq_used_k=seq_used_k_tensor,
                 seq_used_k_2=seq_used_k_2_tensor,
+                seqlens_q_block=seqlens_q_block,
+                seqused_k_block=seqused_k_block,
+                blocks_in_batch=blocks_in_batch,
             )
 
+        seqlens_q_block = None
+        seqused_k_block = None
+        blocks_in_batch = None
+        if use_pod_attn and self.num_prefills > 0:
+            kBlockM = 64
+            seqlens_q_block = []
+            seqused_k_block = []
+            num = (max_query_len - 1) // kBlockM + 1
+            for idx in range(num):
+                seqlens_q_block.append(max_query_len)
+                seqused_k_block.append(seq_lens[0])
+            seqlens_q_block = async_tensor_h2d(seqlens_q_block, torch.int, device, self.runner.pin_memory)
+            seqused_k_block = async_tensor_h2d(seqused_k_block, torch.int, device, self.runner.pin_memory)
+            blocks_in_batch = async_tensor_h2d([0], torch.int, device, self.runner.pin_memory)
+        # print(f"num_decode_tokens={num_decode_tokens}, self={self.num_decode_tokens}")
         return FlashAttentionMetadata(
             num_prefills=self.num_prefills,
             slot_mapping=slot_mapping_tensor,
@@ -725,7 +777,11 @@ class FlashAttentionMetadataBuilder(
             seq_start_loc=seq_start_loc_tensor,
             context_lens_tensor=context_lens_tensor,
             block_tables=block_tables,
+            block_tables_list=self.block_tables,
             use_cuda_graph=use_captured_graph,
+            seqlens_q_block=seqlens_q_block,
+            seqused_k_block=seqused_k_block,
+            blocks_in_batch=blocks_in_batch,
         )
 
 
@@ -924,6 +980,74 @@ class FlashAttentionImpl(AttentionImpl):
         prefill_output = output[:num_prefill_query_tokens]
         assert query.shape[0] == num_prefill_query_tokens
         assert decode_query.shape[0] == num_decode_query_tokens
+        
+        prefill_meta = attn_metadata.prefill_metadata
+        decode_meta = attn_metadata.decode_metadata
+        # print(f"kv_cache.shape={kv_cache.shape}")
+        if use_pod_attn and kv_cache.shape[0] == 2: # not profiling
+            p_query, p_kcache, p_vcache, block_table_p = None, None, None, None
+            if prefill_meta:
+                assert prefill_meta.num_prefills <= 1, "Multiple prefill cache lengths not supported"
+                if prefill_meta.num_prefills == 1:
+                    p_query = query.unsqueeze(0)
+                    p_kcache = key[:num_prefill_kv_tokens].unsqueeze(0)
+                    p_vcache = value[:num_prefill_kv_tokens].unsqueeze(0)
+                    # print(f"prefill_meta.seq_lens[0]={prefill_meta.seq_lens[0]}")
+                    if prefill_meta.block_tables_list is not None and len(prefill_meta.block_tables_list[0]) > 0:
+                        block_table_p = prefill_meta.block_tables
+
+            d_query, d_k, d_v, cache_seqlens_d, block_table_d = None, None, None, None, None
+            if decode_meta:
+                batch_size = decode_meta.num_decode_tokens
+                loc_q = prefill_meta.max_query_len if prefill_meta else 0
+                loc_k = prefill_meta.seq_lens[0] if prefill_meta else 0
+                # print(f"###batchsize={decode_meta.num_decode_tokens}, loc_q={loc_q},loc_k={loc_k}")
+                if batch_size > 0:
+                    d_query = decode_query.unsqueeze(1)
+                    d_k = key[loc_k:].unsqueeze(1)
+                    d_v = value[loc_k:].unsqueeze(1)
+                    cache_seqlens_d = decode_meta.seq_lens_tensor
+                (
+                    seq_lens_arg,
+                    _,
+                    block_table_d,
+                ) = get_seq_len_block_table_args(decode_meta, False, attn_type)
+            # print(f"seqlens_arg={seq_lens_arg}")
+            # print(f"###query.shape={query.shape}")
+            # print(f"###p_query.shape={p_query.shape if p_query != None else None}")
+            # print(f"###d_query.shape={d_query.shape if d_query != None else None}")
+            # print(f"###cache_seqlens={cache_seqlens_d}")
+            # print(f"block_table_d={block_tables_arg}")
+            import pod_attn            
+            # if p_query is not None:
+            #     print(f'q.shape={p_query.shape}, k.shape={p_kcache.shape}, v.shape={p_vcache.shape}')
+            #     print(f"q={p_query[:, -2:, :, :]}")
+            #     print(f"k={p_kcache[:, -2:, :, :]}")
+            #     print(f"v={p_vcache[:, -2:, :, :]}")
+            # print(f"block_table_p={block_table_p}")
+            out_p, out_d = pod_attn.true_fused_nseg_attn_with_kvcache(
+                # p_query, p_kcache, p_vcache,
+                p_query,
+                kv_cache[0] if block_table_p is not None else p_kcache,
+                kv_cache[1] if block_table_p is not None else p_vcache,
+                d_query, kv_cache[0], kv_cache[1], k=None, v=None,
+                rotary_cos=None, rotary_sin=None, cache_seqlens_p = None,
+                cache_seqlens_d = cache_seqlens_d, cache_batch_idx = None,
+                softmax_scale=softmax_scale, causal=True, window_size=(-1, -1), rotary_interleaved=True, fused_params=15,
+                block_table_p=block_table_p,
+                seqlens_q_block_p=prefill_meta.seqlens_q_block if prefill_meta else None,
+                seqused_k_block_p=prefill_meta.seqused_k_block if prefill_meta else None,
+                blocks_in_batch_p=prefill_meta.blocks_in_batch if prefill_meta else None,
+                block_table_d=block_table_d,
+                seqlens_q_block_d=None,
+                seqused_k_block_d=None,
+                blocks_in_batch_d=None,
+            )
+            if p_query is not None:
+                output[:num_prefill_query_tokens].copy_(out_p.squeeze(0))
+            if d_query is not None:
+                output[num_prefill_query_tokens:].copy_(out_d.squeeze(1))
+            return output
 
         if prefill_meta := attn_metadata.prefill_metadata:
             # Prompt run.
@@ -955,6 +1079,10 @@ class FlashAttentionImpl(AttentionImpl):
                         (num_kv_tokens, num_kv_heads, head_size))
 
                 descale_shape = (q_seq_start_loc.shape[0] - 1, key.shape[1])
+                # print(f'q.shape={query.shape}, k.shape={key.shape}, v.shape={value.shape}')
+                # print(f"q={query[-2:, :, :]}")
+                # print(f"k={key[-2:, :, :]}")
+                # print(f"v={value[-2:, :, :]}")
                 flash_attn_varlen_func(
                     q=query,
                     k=key,
@@ -974,6 +1102,7 @@ class FlashAttentionImpl(AttentionImpl):
                     k_descale=layer._k_scale.expand(descale_shape),
                     v_descale=layer._v_scale.expand(descale_shape),
                 )
+                # print(f'prefill:={prefill_output[-2:, :, :]}')
             else:
                 # prefix-enabled attention
                 assert attn_type == AttentionType.DECODER, (

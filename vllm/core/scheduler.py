@@ -1061,6 +1061,7 @@ class Scheduler:
         curr_loras: Optional[Set[int]],
         enable_chunking: bool = False,
         partial_prefill_metadata: Optional[PartialPrefillMetadata] = None,
+        schedule_one=False,
     ) -> SchedulerPrefillOutputs:
         """Schedule sequence groups that are in prefill stage.
 
@@ -1243,6 +1244,10 @@ class Scheduler:
             )
             budget.add_num_seqs(seq_group.request_id, num_new_seqs)
 
+            if schedule_one:
+                print("@@schedule one prefill")
+                break
+
         # Queue requests that couldn't be scheduled.
         waiting_queue.extendleft(leftover_waiting_sequences)
         if len(seq_groups) > 0:
@@ -1254,7 +1259,119 @@ class Scheduler:
             num_lookahead_slots=self._get_num_lookahead_slots(
                 is_prefill=True, enable_chunking=enable_chunking),
             blocks_to_offload=blocks_to_offload)
+    def schedule_simple(self) -> SchedulerOutputs:
+        """Schedule queued requests.
 
+        Chunked prefill allows to chunk prefill requests, batch them together
+        with decode requests. This policy 1. schedule as many decoding requests
+        as possible. 2. schedule chunked prefill requests that are not
+        finished. 3. schedule swapped request. 4. schedule new prefill
+        requests.
+
+        The policy can sustain the high GPU utilization because it can put
+        prefill and decodes requests to the same batch, while it improves
+        inter token latency because decodes requests don't need to be blocked
+        by prefill requests.
+        """
+        # print("schedule_simple")
+        budget = SchedulingBudget(
+            token_budget=self.scheduler_config.max_num_batched_tokens,
+            max_num_seqs=self.scheduler_config.max_num_seqs,
+        )
+        curr_loras: Set[int] = set()
+
+        prefills = SchedulerPrefillOutputs.create_empty()
+        swapped_in = SchedulerSwappedInOutputs.create_empty()
+
+        # Decoding should be always scheduled first by fcfs.
+        running_scheduled = self._schedule_running(
+            budget,
+            curr_loras,
+            enable_chunking=False,
+        )
+
+        # Schedule swapped out requests.
+        # If preemption happens, it means we don't have space for swap-in.
+        if len(running_scheduled.preempted) + len(
+                running_scheduled.swapped_out) == 0:
+            swapped_in = self._schedule_swapped(budget, curr_loras)
+
+        prefills = self._schedule_prefills(
+            budget,
+            curr_loras,
+            enable_chunking=False,
+            schedule_one=True,
+        )
+        # print(f"prefill:{len(prefills.seq_groups)}")
+        assert (budget.num_batched_tokens
+                <= self.scheduler_config.max_num_batched_tokens)
+        assert budget.num_curr_seqs <= self.scheduler_config.max_num_seqs
+
+        # Update waiting requests.
+        self.waiting.extendleft(running_scheduled.preempted)
+
+        # Update new running requests.
+        # By default, vLLM scheduler prioritizes prefills.
+        # Once chunked prefill is enabled,
+        # the policy is changed to prioritize decode requests.
+        self.running.extend(
+            [s.seq_group for s in swapped_in.decode_seq_groups])
+        self.running.extend(
+            [s.seq_group for s in swapped_in.prefill_seq_groups])
+        self.running.extend(
+            [s.seq_group for s in running_scheduled.decode_seq_groups])
+        # Because multiple prefills may be running concurrently, we need to
+        # make sure that prefills which are scheduled to finish are listed
+        # before those that won't. This is so that on the next scheduling
+        # iteration when they have transitioned to the decode stage, they are
+        # properly prioritized over sequences that are still in the prefill
+        # stage.
+        self.running.extend(
+            self._order_finishing_prefills_first(
+                running_scheduled.prefill_seq_groups))
+        self.running.extend([s.seq_group for s in prefills.seq_groups])
+
+        # Update swapped requests.
+        self.swapped.extend(running_scheduled.swapped_out)
+        # Put prefills first due to Attention backend ordering assumption.
+        scheduled_seq_groups = (prefills.seq_groups +
+                                running_scheduled.prefill_seq_groups +
+                                swapped_in.prefill_seq_groups +
+                                running_scheduled.decode_seq_groups +
+                                swapped_in.decode_seq_groups)
+        num_prefill_groups = (len(prefills.seq_groups) +
+                              len(swapped_in.prefill_seq_groups) +
+                              len(running_scheduled.prefill_seq_groups))
+        # If all prompts, then we set num_lookahead_slots to 0
+        # this allows us to go through the `no_spec` path in
+        # `spec_decode_worker.py`
+        all_prefills = len(scheduled_seq_groups) == num_prefill_groups
+        num_lookahead_slots = (0 if
+                               (all_prefills
+                                and not self.scheduler_config.is_multi_step)
+                               else running_scheduled.num_lookahead_slots)
+        return SchedulerOutputs(
+            scheduled_seq_groups=scheduled_seq_groups,
+            num_prefill_groups=num_prefill_groups,
+            num_batched_tokens=budget.num_batched_tokens +
+            budget.num_cached_tokens,
+            blocks_to_swap_in=swapped_in.blocks_to_swap_in,
+            blocks_to_swap_out=running_scheduled.blocks_to_swap_out,
+            blocks_to_copy=running_scheduled.blocks_to_copy +
+            swapped_in.blocks_to_copy,
+            blocks_to_offload=prefills.blocks_to_offload+
+                                running_scheduled.blocks_to_offload+
+                                swapped_in.blocks_to_offload,                                
+            ignored_seq_groups=prefills.ignored_seq_groups +
+            swapped_in.infeasible_seq_groups,
+            num_lookahead_slots=num_lookahead_slots,
+            running_queue_size=len(self.running),
+            preempted=(len(running_scheduled.preempted) +
+                       len(running_scheduled.swapped_out)),
+        )
+        
+        
+        
     def _schedule_default(self) -> SchedulerOutputs:
         """Schedule queued requests.
 
@@ -1521,6 +1638,10 @@ class Scheduler:
 
     def _schedule(self) -> SchedulerOutputs:
         """Schedule queued requests."""
+        import os
+        use_pod_attn = os.getenv('VLLM_USE_POD_ATTN') == '1'
+        if use_pod_attn:
+            return self.schedule_simple()
         if self.scheduler_config.chunked_prefill_enabled:
             return self._schedule_chunked_prefill()
         else:

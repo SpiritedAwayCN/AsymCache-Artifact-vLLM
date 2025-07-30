@@ -7,13 +7,16 @@ import os
 
 assert sys.argv[1] in ['1k', '10k'], f'Invalid argument, got {sys.argv[1]}'
 OUTPUT_DIR = './examples/test/output/'
-
+os.environ['EVCITOR_BLOCK_PROTECT_FLAG'] = '0'
 llm = LLM(
-    model='meta-llama/Meta-Llama-3.1-8B-Instruct',
+    model='LargeWorldModel/LWM-Text-1M',
     enable_prefix_caching=True,
     tensor_parallel_size=2,
     disable_log_stats=False,
-    collect_detailed_traces='all',
+    collect_detailed_traces=['all'],
+    max_model_len=10000,
+    block_size=64,
+    dtype='float16'
 )
 
 sampling_params=SamplingParams(temperature=0, max_tokens=1)
@@ -32,12 +35,15 @@ target_input_ids = [BASE_TOKEN_ID] * TOTAL_LENGTH
 f = open(os.path.join(OUTPUT_DIR, f'profile_cache_{sys.argv[1]}-tp2.csv'), 'w')
 f.write('cached_length,' + ','.join([f'p{i+1}' for i in range(MAX_TRY)]))
 f.write(',AVG\n')
+
+os.environ['EVCITOR_BLOCK_PROTECT_FLAG'] = '1'
+
 llm.generate(None, 
             sampling_params=sampling_params,
             prompt_token_ids=target_input_ids,
             use_tqdm=False,
             slo_urgents=2.0) # slo_urgent=2.0 means that the token is not evicted
-
+os.environ['EVCITOR_BLOCK_PROTECT_FLAG'] = '0'
 trange_obj = trange(0, TOTAL_LENGTH + 1, 16)
 for cached_length in trange_obj:
     # trange_obj.set_postfix({'cached_length': cached_length})
