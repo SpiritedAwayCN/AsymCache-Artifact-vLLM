@@ -1095,6 +1095,7 @@ class Scheduler:
                 ignored_seq_groups=[],
                 num_lookahead_slots=self._get_num_lookahead_slots(
                     is_prefill=True, enable_chunking=enable_chunking),
+                blocks_to_offload=[],
             )
         ignored_seq_groups: List[SequenceGroup] = []
         seq_groups: List[ScheduledSequenceGroup] = []

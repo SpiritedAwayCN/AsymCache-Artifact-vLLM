@@ -946,9 +946,16 @@ class SequenceGroup:
                 seq.data.update_num_computed_tokens(num_new_computed_tokens)
                 # TODO(chunan): Update seq.data.suffix_computed_block_locs and first_computed_start
                 # since the computed chunk may reduce the number of segments
-        
+                locs = seq.suffix_computed_block_locs
+                new = num_new_computed_tokens
+                first = seq.get_num_computed_tokens()
+                print(f"num_new_computed_tokens={num_new_computed_tokens}, first={first}, locs={locs}")
+                while locs[0] != 0 and first >= locs[0]:
+                    # first seg was computed.
+                    locs[0], locs[1] = locs[2], locs[3]
+                    locs[2], locs[3] = 0, 0
         # TODO(chunan): Update the self.suffix_computed_block_locs, using the first_seq
-        # self.suffix_computed_block_locs = self.first_seq.data.suffix_computed_block_locs
+        self.suffix_computed_block_locs = self.first_seq.suffix_computed_block_locs
 
     def get_num_uncomputed_tokens(self) -> int:
         num_uncomputed_tokens = 0

@@ -667,6 +667,7 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
         inter_data.prefix_cache_hit = prefix_cache_hit
 
         if not prefix_cache_hit:
+            print("choose 0")
             return
 
         assert computed_block_nums is not None
@@ -685,62 +686,70 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
         # computed chunks + current chunk.
         seq_len = inter_data.seq_lens[seq_idx]
         if prefix_cache_len <= context_len and not has_2_segments:
+            # print("choose 1")
             # We already passed the cache hit region,
             # so do normal computation.
             pass
         elif has_2_segments or context_len < prefix_cache_len < seq_len:
+            # print("choose 2")
             # Partial hit. Compute the missing part.
             
             # TODO(chunan): for chunked prefill, should handle when seq_len < suffix_computed_block_locs
             # because the seq_len is the length from beginning to the end of the current chunk.
-            
+            # print(f"seq_len={seq_len}, context_len={context_len}, prefix_cache_len={prefix_cache_len}, suffix_computed_block_locs={inter_data.suffix_computed_block_locs}")
             uncomputed_start = prefix_cache_len - context_len
-            context_len = prefix_cache_len
+            # context_len = prefix_cache_len
+
+            border = len(inter_data.input_tokens[seq_idx])+1
+            # print(f"border={border}")
+            interslice = lambda a, b: slice(max(a, uncomputed_start), min(b, border))
             if inter_data.suffix_computed_block_locs[2] > 0:
                 locs = inter_data.suffix_computed_block_locs
 
                 inter_data.input_tokens_seg3[seq_idx] = inter_data.input_tokens[
-                    seq_idx][locs[3]:]
+                    seq_idx][interslice(locs[3]-context_len, border)]
                 inter_data.input_positions_seg3[seq_idx] = inter_data.input_positions[
-                    seq_idx][locs[3]:]
+                    seq_idx][interslice(locs[3]-context_len, border)]
                 
                 inter_data.input_tokens_seg2[seq_idx] = inter_data.input_tokens[
-                    seq_idx][locs[1]:locs[2]]
+                    seq_idx][interslice(locs[1]-context_len, locs[2]-context_len)]
                 inter_data.input_positions_seg2[seq_idx] = inter_data.input_positions[
-                    seq_idx][locs[1]:locs[2]]
+                    seq_idx][interslice(locs[1]-context_len, locs[2]-context_len)]
                 
                 inter_data.input_tokens[seq_idx] = inter_data.input_tokens[
-                    seq_idx][uncomputed_start:locs[0]]
+                    seq_idx][interslice(uncomputed_start,locs[0]-context_len)]
                 inter_data.input_positions[seq_idx] = inter_data.input_positions[
-                    seq_idx][uncomputed_start:locs[0]]
+                    seq_idx][interslice(uncomputed_start,locs[0]-context_len)]
 
                 inter_data.query_lens[seq_idx] = \
-                    locs[0] - uncomputed_start + \
-                    locs[2] - locs[1] + \
-                    seq_len - locs[3]
+                    len(inter_data.input_tokens_seg3[seq_idx]) + \
+                    len(inter_data.input_tokens_seg2[seq_idx]) + \
+                    len(inter_data.input_tokens[seq_idx])
             elif inter_data.suffix_computed_block_locs[0] > 0:
+                locs = inter_data.suffix_computed_block_locs
+
                 inter_data.input_tokens_seg2[seq_idx] = inter_data.input_tokens[
-                    seq_idx][inter_data.suffix_computed_block_locs[1]:]
+                    seq_idx][interslice(locs[1]-context_len, border)]
                 inter_data.input_positions_seg2[seq_idx] = inter_data.input_positions[
-                    seq_idx][inter_data.suffix_computed_block_locs[1]:]
+                    seq_idx][interslice(locs[1]-context_len, border)]
                 inter_data.input_tokens[seq_idx] = inter_data.input_tokens[
-                    seq_idx][uncomputed_start:inter_data.suffix_computed_block_locs[0]]
+                    seq_idx][interslice(uncomputed_start,locs[0]-context_len)]
                 inter_data.input_positions[seq_idx] = inter_data.input_positions[
-                    seq_idx][uncomputed_start:inter_data.suffix_computed_block_locs[0]]
+                    seq_idx][interslice(uncomputed_start,locs[0]-context_len)]
                 inter_data.query_lens[seq_idx] = \
-                    inter_data.suffix_computed_block_locs[0] - uncomputed_start + \
-                    seq_len - inter_data.suffix_computed_block_locs[1]
-                    
+                    len(inter_data.input_tokens_seg2[seq_idx]) + \
+                    len(inter_data.input_tokens[seq_idx])                    
             else:
                 inter_data.input_tokens[seq_idx] = inter_data.input_tokens[
                     seq_idx][uncomputed_start:]
                 inter_data.input_positions[seq_idx] = inter_data.input_positions[
                     seq_idx][uncomputed_start:]
                 inter_data.query_lens[
-                    seq_idx] = inter_data.seq_lens[seq_idx] - context_len
+                    seq_idx] = inter_data.seq_lens[seq_idx] - prefix_cache_len
 
-            inter_data.context_lens[seq_idx] = context_len
+            inter_data.context_lens[seq_idx] = prefix_cache_len
         elif seq_len <= prefix_cache_len:
+            # print("choose 3")
             # Full hit. Only compute the last token to avoid
             # erroneous behavior. FIXME: Ideally we should directly
             # mark all tokens as computed in the scheduler and do not

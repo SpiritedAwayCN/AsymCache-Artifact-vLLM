@@ -1118,7 +1118,8 @@ class ComputedBlocksTracker:
             logger.info("truncating block hashes for seq_id %d to %d blocks",
                         seq.seq_id, seq.suffix_computed_block_locs[0] // self._block_size)
             block_hashes = block_hashes[:(seq.suffix_computed_block_locs[0] // self._block_size)]
-
+        if seq.is_prefill():
+            block_hashes = block_hashes[:(seq.get_num_computed_tokens() // self._block_size)]
         # This is O(logN), where N is the number of blocks.
         num_cached_blocks = len(
             self._allocator.find_cached_blocks_prefix(block_hashes))
