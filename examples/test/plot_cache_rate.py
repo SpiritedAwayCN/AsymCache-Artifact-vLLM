@@ -7,7 +7,9 @@ map_str = {
     'origin': '',
     '2-kernel': '_2seg',
 }
-DATA_DIR = './examples/test/output/'
+DATA_DIR = './output/'
+
+tp = 1
 
 def plot_cache_rate(ax, filename_base, title):
     for label, fn in map_str.items():
@@ -30,7 +32,7 @@ def plot_cache_rate(ax, filename_base, title):
 fig, axs = plt.subplots(2, tight_layout=True)
 
 for i, l in enumerate(['1k', '10k']):
-    filename_base = os.path.join(DATA_DIR, f'profile_cache%s_{l}-tp2.csv')
-    plot_cache_rate(axs[i], filename_base, f'Llama3.1-8B, TP=2, Prefill Length: ({l})')
+    filename_base = os.path.join(DATA_DIR, f'profile_cache%s_{l}-tp{tp}.csv')
+    plot_cache_rate(axs[i], filename_base, f'LWM, TP={tp}, Prefill Length: ({l})')
 
-plt.savefig('profile_cache_rate.png')
+plt.savefig(f'profile_cache_rate_tp{tp}.png')

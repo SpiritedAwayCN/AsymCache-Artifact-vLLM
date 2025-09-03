@@ -5,16 +5,21 @@ import torch
 import sys
 import os
 
-assert sys.argv[1] in ['1k', '10k'], f'Invalid argument, got {sys.argv[1]}'
-OUTPUT_DIR = './examples/test/output/'
+# tp = 8
+
+seqlen = int(sys.argv[1][:-1])
+tp = int(sys.argv[2])
+assert seqlen in range(1, 11), f'Invalid argument, got {sys.argv[1]}'
+OUTPUT_DIR = '/home/pkuhetu/sca/chenyilei/v0.8/vllm-dev/examples/test/output/'
 os.environ['EVCITOR_BLOCK_PROTECT_FLAG'] = '0'
 llm = LLM(
     model='LargeWorldModel/LWM-Text-1M',
     enable_prefix_caching=True,
-    tensor_parallel_size=2,
+    # enable_chunked_prefill=True,
+    tensor_parallel_size=tp,
     disable_log_stats=False,
     collect_detailed_traces=['all'],
-    max_model_len=10000,
+    max_model_len=20000,
     block_size=64,
     dtype='float16'
 )
@@ -25,14 +30,19 @@ if sys.argv[1] == '1k':
     TOTAL_LENGTH = 1024
     BASE_TOKEN_ID = 5
     MAX_TRY = 10
-else:
+elif sys.argv[1] == '10k':
     TOTAL_LENGTH = 1024 * 10
     BASE_TOKEN_ID = 5
     MAX_TRY = 6
+else:
+    TOTAL_LENGTH = 1024 * seqlen
+    BASE_TOKEN_ID = 5
+    MAX_TRY = 6
+
 
 target_input_ids = [BASE_TOKEN_ID] * TOTAL_LENGTH
 
-f = open(os.path.join(OUTPUT_DIR, f'profile_cache_{sys.argv[1]}-tp2.csv'), 'w')
+f = open(os.path.join(OUTPUT_DIR, f'profile_cache_{sys.argv[1]}-tp{tp}.csv'), 'w')
 f.write('cached_length,' + ','.join([f'p{i+1}' for i in range(MAX_TRY)]))
 f.write(',AVG\n')
 
@@ -41,7 +51,7 @@ os.environ['EVCITOR_BLOCK_PROTECT_FLAG'] = '1'
 llm.generate(None, 
             sampling_params=sampling_params,
             prompt_token_ids=target_input_ids,
-            use_tqdm=False,
+            use_tqdm=True,
             slo_urgents=2.0) # slo_urgent=2.0 means that the token is not evicted
 os.environ['EVCITOR_BLOCK_PROTECT_FLAG'] = '0'
 trange_obj = trange(0, TOTAL_LENGTH + 1, 16)

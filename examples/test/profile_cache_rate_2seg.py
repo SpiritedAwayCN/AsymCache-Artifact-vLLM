@@ -5,17 +5,21 @@ from tqdm import trange
 from vllm import LLM, SamplingParams
 import torch
 
-assert sys.argv[1] in ['1k', '10k'], f'Invalid argument, got {sys.argv[1]}'
-OUTPUT_DIR = './examples/test/output/'
+# tp = 8
+
+seqlen = int(sys.argv[1][:-1])
+tp = int(sys.argv[2])
+assert seqlen in range(1, 11), f'Invalid argument, got {sys.argv[1]}'
+OUTPUT_DIR = '/home/pkuhetu/sca/chenyilei/v0.8/vllm-dev/examples/test/output/'
 os.environ['EVCITOR_BLOCK_PROTECT_FLAG'] = '0'
 llm = LLM(
     model='LargeWorldModel/LWM-Text-1M',
     enable_prefix_caching=True,
-    tensor_parallel_size=2,
+    # enable_chunked_prefill=True,
+    tensor_parallel_size=tp,
     disable_log_stats=False,
     collect_detailed_traces=['all'],
-    enable_chunked_prefill=False,
-    max_model_len=10000,
+    max_model_len=20000,
     block_size=64,
     dtype='float16'
 )
@@ -29,15 +33,20 @@ if sys.argv[1] == '1k':
     BASE_TOKEN_ID = 5
     MAX_TRY = 10
     POST_TOKEN, START_TOKEN = 32, 32 # for 1K
-else:
+elif sys.argv[1] == '10k':
     TOTAL_LENGTH = 1024 * 10
+    BASE_TOKEN_ID = 5
+    MAX_TRY = 6
+    POST_TOKEN, START_TOKEN = 128, 32 # for 10K
+else:
+    TOTAL_LENGTH = 1024 * seqlen
     BASE_TOKEN_ID = 5
     MAX_TRY = 6
     POST_TOKEN, START_TOKEN = 128, 32 # for 10K
 
 target_input_ids = [BASE_TOKEN_ID] * (TOTAL_LENGTH - POST_TOKEN)
 
-f = open(os.path.join(OUTPUT_DIR, f'profile_tmp_{sys.argv[1]}-tp1.csv'), 'w')
+f = open(os.path.join(OUTPUT_DIR, f'profile_tmp_{sys.argv[1]}-tp{tp}.csv'), 'w')
 f.write('cached_length,' + ','.join([f'p{i+1}' for i in range(MAX_TRY)]))
 f.write(',AVG\n')
 
@@ -65,6 +74,7 @@ for i, cached_length in enumerate(trange_obj):
     # block_manager.test_ignore_cache_block_num = \
         # (TOTAL_LENGTH - POST_TOKEN - cached_length) // block_manager.block_size
     block_manager.test_force_nocache_end = TOTAL_LENGTH - POST_TOKEN - cached_length + START_TOKEN
+    block_manager.test_set_force_nocache(START_TOKEN, TOTAL_LENGTH - POST_TOKEN - cached_length + START_TOKEN)
     print(f'block_manager.test_force_nocache_end: {block_manager.test_force_nocache_end}')
     print(f'block_manager.test_force_nocache_begin: {block_manager.test_force_nocache_begin}')
     for j in range(MAX_TRY):
