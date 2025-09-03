@@ -949,7 +949,7 @@ class SequenceGroup:
                 locs = seq.suffix_computed_block_locs
                 new = num_new_computed_tokens
                 first = seq.get_num_computed_tokens()
-                print(f"num_new_computed_tokens={num_new_computed_tokens}, first={first}, locs={locs}")
+                # print(f"num_new_computed_tokens={num_new_computed_tokens}, first={first}, locs={locs}")
                 while locs[0] != 0 and first >= locs[0]:
                     # first seg was computed.
                     locs[0], locs[1] = locs[2], locs[3]

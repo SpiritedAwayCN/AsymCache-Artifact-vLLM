@@ -100,17 +100,28 @@ class LRUEvictor(Evictor):
         if len(self.free_table) == 0:
             raise ValueError("No usable cache memory left")
 
+        tmp = []
         while self.priority_queue:
             # We do not remove outdated entries from the priority queue at the
             # time of updating the last_accessed timestamp. Instead, outdated
             # entries are filtered out here during eviction. Outdated entries
             # would either not in the free table, or have older last accessed
             # time.
-            last_accessed, _, block_id, content_hash = heapq.heappop(
+            last_accessed, v, block_id, content_hash = heapq.heappop(
                 self.priority_queue)
+            if block_id in self.protect_blocks:
+                tmp.append((last_accessed, v, block_id, content_hash))
+                continue
             if (block_id in self.free_table and
                     self.free_table[block_id].last_accessed == last_accessed):
                 self.free_table.pop(block_id)
+                import time
+                now = time.time()
+                for _, v, b, c in tmp:
+                    heapq.heappush(self.priority_queue, (now, v, b, c))
+                    if b in self.free_table:
+                        self.free_table[b].last_accessed = now
+                # print(f"protect={self.protect_blocks}")
                 return block_id, content_hash
 
         raise ValueError("No usable cache memory left")
@@ -119,12 +130,7 @@ class LRUEvictor(Evictor):
             last_accessed: float, total_count: Optional[float] = None):
         import os
         if os.getenv('EVCITOR_BLOCK_PROTECT_FLAG') == '1':
-            print("protect in evictor")
-            self.protect_blocks.add(content_hash)
-        if content_hash in self.protect_blocks:
-            # print("A protect block added.")
-            # print(f'time={last_accessed}')
-            last_accessed = 1e25
+            self.protect_blocks.add(block_id)
         self.free_table[block_id] = BlockMetaData(content_hash,
                                                   num_hashed_tokens,
                                                   last_accessed)

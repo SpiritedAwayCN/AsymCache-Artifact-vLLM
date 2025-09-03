@@ -551,6 +551,8 @@ class Scheduler:
         for i in range(1, self.scheduler_config.max_num_partial_prefills + 1):
             self.partial_prefill_budget_lookup_list[i] = (
                 scheduler_config.max_num_batched_tokens // i)
+        
+        self.use_simple_schedule = False
 
     @property
     def next_cache_id(self):
@@ -1246,14 +1248,15 @@ class Scheduler:
             budget.add_num_seqs(seq_group.request_id, num_new_seqs)
 
             if schedule_one:
-                print("@@schedule one prefill")
+                # print("@@schedule one prefill")
                 break
 
         # Queue requests that couldn't be scheduled.
         waiting_queue.extendleft(leftover_waiting_sequences)
         if len(seq_groups) > 0:
             self.prev_prompt = True
-
+        if schedule_one:
+            assert len(seq_groups) <= 1, "schedule simple error."
         return SchedulerPrefillOutputs(
             seq_groups=seq_groups,
             ignored_seq_groups=ignored_seq_groups,
@@ -1351,6 +1354,7 @@ class Scheduler:
                                (all_prefills
                                 and not self.scheduler_config.is_multi_step)
                                else running_scheduled.num_lookahead_slots)
+        # print(f"all_prefills={all_prefills},simple:tot={len(scheduled_seq_groups)},d={len(running_scheduled.decode_seq_groups)}")
         return SchedulerOutputs(
             scheduled_seq_groups=scheduled_seq_groups,
             num_prefill_groups=num_prefill_groups,
@@ -1641,7 +1645,7 @@ class Scheduler:
         """Schedule queued requests."""
         import os
         use_pod_attn = os.getenv('VLLM_USE_POD_ATTN') == '1'
-        if use_pod_attn:
+        if use_pod_attn and self.use_simple_schedule:
             return self.schedule_simple()
         if self.scheduler_config.chunked_prefill_enabled:
             return self._schedule_chunked_prefill()

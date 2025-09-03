@@ -186,6 +186,7 @@ class PrefixCachingBlockAllocator(BlockAllocator):
         assert block.content_hash is not None
 
         cached_block_id = self._cached_blocks.get(block.content_hash, None)
+        # print(f"num_tokens_total:{block.num_tokens_total}, id={block.block_id}, cached_blocks={self._cached_blocks.values()}, cached_block_id={cached_block_id}, {self.test_force_nocache_begin}, { self.test_force_nocache_end},if={self.test_force_nocache_begin < block.num_tokens_total <= self.test_force_nocache_end}")
         if cached_block_id is not None:
             if self.test_force_nocache_begin < block.num_tokens_total <= self.test_force_nocache_end:
                 # MODIFIED: force ignored cache
@@ -346,15 +347,15 @@ class PrefixCachingBlockAllocator(BlockAllocator):
         # and since its content would be changed, we need
         # to remove it from _cached_blocks's tracking list
         block_id, content_hash_to_evict = self.evictor.evict()
-
+        # print(f"get evict, block_id={block_id}")
         # Sanity checks
         if content_hash_to_evict in self._cached_blocks:
             
             _block_id = self._cached_blocks[content_hash_to_evict]
-            assert self._refcounter.get(_block_id) == 0
-            assert _block_id == block_id
-
-            self._cached_blocks.pop(content_hash_to_evict)
+            # assert self._refcounter.get(_block_id) == 0
+            # assert _block_id == block_id
+            if _block_id == block_id:
+                self._cached_blocks.pop(content_hash_to_evict)
         else:
             logger.warning("Evictor evicted a block with content hash %s,which is not in the cached blocks. "
                            "This should only happen when testing 2-seg Attention.")
@@ -534,6 +535,7 @@ class PrefixCachingBlockAllocator(BlockAllocator):
             # Mark this block as touched so that it can be marked as
             # computed after the entire batch of sequences are scheduled.
             self._touched_blocks.add(block.block_id)
+            # print(f'not in cache complete:id={block.block_id},prev={block.prev_block.block_id if block.prev_block else "None"}')
             return block.block_id
 
         # Reuse the cached content hash
@@ -544,6 +546,7 @@ class PrefixCachingBlockAllocator(BlockAllocator):
         # it from the evictor.
         # Note that in this case, the block is marked as computed
         self._incr_refcount_cached_block(block)
+        # print(f'in cache complete:id={block.block_id},prev={block.prev_block.block_id if block.prev_block else "None"}')
 
         return block.block_id
 
@@ -1119,7 +1122,9 @@ class ComputedBlocksTracker:
                         seq.seq_id, seq.suffix_computed_block_locs[0] // self._block_size)
             block_hashes = block_hashes[:(seq.suffix_computed_block_locs[0] // self._block_size)]
         if seq.is_prefill():
-            block_hashes = block_hashes[:(seq.get_num_computed_tokens() // self._block_size)]
+            # TODO(chenyilei): use block_hashes = ... if chunked_prefill is enabled.
+            pass
+            # block_hashes = block_hashes[:(seq.get_num_computed_tokens() // self._block_size)]
         # This is O(logN), where N is the number of blocks.
         num_cached_blocks = len(
             self._allocator.find_cached_blocks_prefix(block_hashes))

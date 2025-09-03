@@ -3,7 +3,7 @@
 from collections import defaultdict
 from dataclasses import dataclass
 from itertools import accumulate
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Type
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Type, Union
 import itertools
 
 import torch
@@ -703,11 +703,11 @@ class FlashAttentionMetadataBuilder(
                     if loc < query_lens_2[0]:
                         seqlens_q_block.append(query_lens_2[0])
                         seqused_k_block.append(seq_used_k[0])
-                        print(f"seg2={query_lens_2[0]},{seq_used_k[0]}")
+                        # print(f"seg2={query_lens_2[0]},{seq_used_k[0]}")
                     elif loc < query_lens_2[0] + query_lens_3[0]:
                         seqlens_q_block.append(query_lens_2[0] + query_lens_3[0])
                         seqused_k_block.append(seq_used_k_2[0])
-                        print(f"seg3={query_lens_2[0] + query_lens_3[0]},{seq_used_k_2[0]}")
+                        # print(f"seg3={query_lens_2[0] + query_lens_3[0]},{seq_used_k_2[0]}")
                     else:
                         seqlens_q_block.append(max_query_len)
                         seqused_k_block.append(seq_lens[0])
@@ -984,7 +984,7 @@ class FlashAttentionImpl(AttentionImpl):
         prefill_meta = attn_metadata.prefill_metadata
         decode_meta = attn_metadata.decode_metadata
         # print(f"kv_cache.shape={kv_cache.shape}")
-        if use_pod_attn and kv_cache.shape[0] == 2: # not profiling
+        if use_pod_attn and kv_cache.shape[0] == 2 and (not prefill_meta or prefill_meta.num_prefills <= 1): # not profiling
             p_query, p_kcache, p_vcache, block_table_p = None, None, None, None
             if prefill_meta:
                 assert prefill_meta.num_prefills <= 1, "Multiple prefill cache lengths not supported"
@@ -1025,6 +1025,7 @@ class FlashAttentionImpl(AttentionImpl):
             #     print(f"k={p_kcache[:, -2:, :, :]}")
             #     print(f"v={p_vcache[:, -2:, :, :]}")
             # print(f"block_table_p={block_table_p}")
+            # print("pod attn.")
             out_p, out_d = pod_attn.true_fused_nseg_attn_with_kvcache(
                 # p_query, p_kcache, p_vcache,
                 p_query,
@@ -1053,6 +1054,7 @@ class FlashAttentionImpl(AttentionImpl):
             # Prompt run.
             if (kv_cache.numel() == 0 or prefill_meta.block_tables is None
                     or prefill_meta.block_tables.numel() == 0):
+                # print("flash attention.")
                 # normal attention
                 # When block_tables are not filled, it means q and k are the
                 # prompt, and they have the same length.
@@ -1115,7 +1117,7 @@ class FlashAttentionImpl(AttentionImpl):
                                 key.shape[1])
                 
                 if prefill_meta.seq_lens_firstseg is None:
-                    logger.info(prefill_meta)
+                    # logger.info(prefill_meta)
                     
                     flash_attn_varlen_func(  # noqa
                         q=query,

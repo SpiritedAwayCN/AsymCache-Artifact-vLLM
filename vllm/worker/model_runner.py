@@ -667,7 +667,7 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
         inter_data.prefix_cache_hit = prefix_cache_hit
 
         if not prefix_cache_hit:
-            print("choose 0")
+            # print("choose 0")
             return
 
         assert computed_block_nums is not None

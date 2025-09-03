@@ -150,6 +150,11 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
         else:
             return AllocStatus.LATER
 
+    def test_set_force_nocache(self, begin, end):
+        if isinstance(self.block_allocator._allocators[Device.GPU], PrefixCachingBlockAllocator):
+            self.block_allocator._allocators[Device.GPU].test_force_nocache_begin = begin
+            self.block_allocator._allocators[Device.GPU].test_force_nocache_end = end
+
     def _allocate_sequence(self, seq: Sequence) -> BlockTable:
         block_table = BlockTable(
             block_size=self.block_size,
@@ -191,12 +196,12 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
             # TODO: move `total_count` to refcounter
             if segment_status == 2:
                 seq.suffix_computed_block_locs[1] = logical_idx
-            elif seq.suffix_computed_block_locs[0] > 0 and isinstance(self.block_allocator, PrefixCachingBlockAllocator):
+            elif seq.suffix_computed_block_locs[0] > 0 and isinstance(self.block_allocator._allocators[Device.GPU], PrefixCachingBlockAllocator):
                 blk = block_table._blocks._blocks[seq.suffix_computed_block_locs[1]]
-                blk = self.block_allocator._block_tracker[blk.block_id]
+                blk = self.block_allocator._allocators[Device.GPU]._block_tracker[blk.block_id]
                 
                 for block in block_table._blocks._blocks[seq.suffix_computed_block_locs[0]:seq.suffix_computed_block_locs[1]]:
-                    tgt_blk = self.block_allocator._block_tracker[block.block_id]
+                    tgt_blk = self.block_allocator._allocators[Device.GPU]._block_tracker[block.block_id]
                     tgt_blk.total_count = blk.total_count
                     tgt_blk.last_accessed = blk.last_accessed
             
@@ -204,10 +209,10 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
                 seq.suffix_computed_block_locs[3] = logical_idx
             elif seq.suffix_computed_block_locs[2] > 0:
                 blk = block_table._blocks._blocks[seq.suffix_computed_block_locs[3]]
-                blk = self.block_allocator._block_tracker[blk.block_id]
+                blk = self.block_allocator._allocators[Device.GPU]._block_tracker[blk.block_id]
                 
                 for block in block_table._blocks._blocks[seq.suffix_computed_block_locs[2]:seq.suffix_computed_block_locs[3]]:
-                    tgt_blk = self.block_allocator._block_tracker[block.block_id]
+                    tgt_blk = self.block_allocator._allocators[Device.GPU]._block_tracker[block.block_id]
                     tgt_blk.total_count = blk.total_count
                     tgt_blk.last_accessed = blk.last_accessed
             
@@ -219,9 +224,9 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
             seq.suffix_computed_block_locs[2] *= self.block_size
             seq.suffix_computed_block_locs[3] *= self.block_size
             
-            logger.info(f"seq: {seq}, "
-                        f"suffix_computed_block_locs: {seq.suffix_computed_block_locs}, "
-                        f"first_compute_start: {first_compute_start * self.block_size}")
+            # logger.info(f"seq: {seq}, "
+            #             f"suffix_computed_block_locs: {seq.suffix_computed_block_locs}, "
+            #             f"first_compute_start: {first_compute_start * self.block_size}")
 
         return block_table
 
