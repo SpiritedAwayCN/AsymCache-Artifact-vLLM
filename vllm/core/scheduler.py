@@ -1645,7 +1645,7 @@ class Scheduler:
         """Schedule queued requests."""
         import os
         use_pod_attn = os.getenv('VLLM_USE_POD_ATTN') == '1'
-        if use_pod_attn and self.use_simple_schedule:
+        if use_pod_attn and (self.use_simple_schedule or os.getenv('VLLM_USE_TEST_SIMPLE_SCHEDULER')=='1'):
             return self.schedule_simple()
         if self.scheduler_config.chunked_prefill_enabled:
             return self._schedule_chunked_prefill()

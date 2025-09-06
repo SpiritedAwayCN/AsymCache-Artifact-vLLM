@@ -9,6 +9,7 @@ export VLLM_ALLOW_DEPRECATED_BLOCK_MANAGER_V1=1
 export TRANSFORMERS_OFFLINE=1
 export VLLM_USE_V1=0
 export VLLM_USE_POD_ATTN=1
+export VLLM_USE_TEST_SIMPLE_SCHEDULER=1
 # install quart first -- required for disagg prefill proxy serve
 if python3 -c "import quart" &> /dev/null; then
     echo "Quart is already installed."
@@ -28,15 +29,17 @@ wait_for_server() {
 }
 
 # prefilling instance, which is the KV producer
-CUDA_VISIBLE_DEVICES=4,5,6 python3 \
+CUDA_VISIBLE_DEVICES=6,7 python3 \
     -m vllm.entrypoints.openai.api_server \
     --model LargeWorldModel/LWM-Text-1M \
-    --port 8047 \
+    -tp 2 \
+    --block-size 64 \
     --block-size 256 \
     --dtype float16 \
     --enable-prefix-caching \
     --max-model-len 10000 \
     --gpu-memory-utilization 0.8 &
+    # --collect_detailed_traces all \
 
 # decoding instance, which is the KV consumer
 # VLLM_DISTRIBUTED_KV_ROLE=consumer CUDA_VISIBLE_DEVICES=2 python3 \
