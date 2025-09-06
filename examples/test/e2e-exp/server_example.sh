@@ -33,10 +33,11 @@ CUDA_VISIBLE_DEVICES=6,7 python3 \
     -m vllm.entrypoints.openai.api_server \
     --model LargeWorldModel/LWM-Text-1M \
     -tp 2 \
+    --port 8047 \
     --block-size 64 \
-    --block-size 256 \
     --dtype float16 \
     --enable-prefix-caching \
+    --enable_chunked_prefill False \
     --max-model-len 10000 \
     --gpu-memory-utilization 0.8 &
     # --collect_detailed_traces all \
@@ -53,7 +54,7 @@ CUDA_VISIBLE_DEVICES=6,7 python3 \
 
 # wait until prefill and decode instances are ready
 sleep 45
-wait_for_server 8047
+# wait_for_server 8147
 
 # launch a proxy server that opens the service at port 8000
 # the workflow of this proxy:
@@ -90,7 +91,17 @@ wait_for_server 8047
 
 # echo "Successfully finished 2 test requests!"
 # echo ""
-read -r
+# 信号处理函数（空函数，仅用于中断 sleep）
+handle_interrupt() {
+    : # 空操作
+}
+
+# 捕获 SIGINT 信号
+trap handle_interrupt SIGINT
+
+# 等待用户按下 Ctrl+C
+echo "请按 Ctrl+C 结束执行..."
+sleep infinity
 # Cleanup commands, suppressing their output
 ps -e | grep pt_main_thread | awk '{print $1}' | xargs kill -9 > /dev/null 2>&1
 pkill -f python3 > /dev/null 2>&1
