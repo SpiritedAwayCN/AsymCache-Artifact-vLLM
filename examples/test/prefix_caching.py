@@ -85,7 +85,6 @@ def get_generation_time(llm, sampling_params, prompts):
     # print the output and generation time
     print(f"Output: {output[0].outputs[0].text}")
     print(f"Generation time: {end_time - start_time} seconds.")
-    
     # print('log_stats', llm.llm_engine.log_stats)
     # llm.llm_engine.do_log_stats()
 
@@ -101,7 +100,7 @@ llm = LLM(
     tensor_parallel_size=2,
     disable_log_stats=False,
     enforce_eager=False,
-    enable_chunked_prefill=False,
+    enable_chunked_prefill=True,
     max_model_len=10000,
     # num_gpu_blocks_override=24,
     # max_model_len=24*64,
@@ -124,12 +123,14 @@ questions = [
 ]
 # gpu_block=24
 # Querying the age of John Doe
+
+scheduler = llm.llm_engine.scheduler[0]
+# scheduler.use_simple_schedule = True
 get_generation_time(
     llm,
     sampling_params,
-    LONG_PROMPT + last_line1 + questions[0],
+    LONG_PROMPT_2 + last_line1 + questions[0]
 )
-
 get_generation_time(
     llm,
     sampling_params,

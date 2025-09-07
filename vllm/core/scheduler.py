@@ -1508,7 +1508,9 @@ class Scheduler:
             preempted=preempted,
         )
 
-    def _schedule_chunked_prefill(self) -> SchedulerOutputs:
+    def _schedule_chunked_prefill(self,
+        schedule_one=False,
+    ) -> SchedulerOutputs:
         """Schedule queued requests.
 
         Chunked prefill allows to chunk prefill requests, batch them together
@@ -1557,6 +1559,7 @@ class Scheduler:
             curr_loras,
             enable_chunking=True,
             partial_prefill_metadata=partial_prefill_metadata,
+            schedule_one=schedule_one,
         )
 
         assert (budget.num_batched_tokens
@@ -1645,10 +1648,11 @@ class Scheduler:
         """Schedule queued requests."""
         import os
         use_pod_attn = os.getenv('VLLM_USE_POD_ATTN') == '1'
-        if use_pod_attn and (self.use_simple_schedule or os.getenv('VLLM_USE_TEST_SIMPLE_SCHEDULER')=='1'):
+        schedule_one = os.getenv('VLLM_SCHEDULE_ONE_PREFILL') == '1'
+        if self.use_simple_schedule:
             return self.schedule_simple()
         if self.scheduler_config.chunked_prefill_enabled:
-            return self._schedule_chunked_prefill()
+            return self._schedule_chunked_prefill(schedule_one=schedule_one)
         else:
             return self._schedule_default()
 

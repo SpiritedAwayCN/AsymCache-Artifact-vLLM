@@ -1123,8 +1123,8 @@ class ComputedBlocksTracker:
             block_hashes = block_hashes[:(seq.suffix_computed_block_locs[0] // self._block_size)]
         if seq.is_prefill():
             # TODO(chenyilei): use block_hashes = ... if chunked_prefill is enabled.
+            block_hashes = block_hashes[:(seq.get_num_computed_tokens() // self._block_size)]
             pass
-            # block_hashes = block_hashes[:(seq.get_num_computed_tokens() // self._block_size)]
         # This is O(logN), where N is the number of blocks.
         num_cached_blocks = len(
             self._allocator.find_cached_blocks_prefix(block_hashes))

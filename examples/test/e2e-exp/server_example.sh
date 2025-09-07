@@ -9,7 +9,7 @@ export VLLM_ALLOW_DEPRECATED_BLOCK_MANAGER_V1=1
 export TRANSFORMERS_OFFLINE=1
 export VLLM_USE_V1=0
 export VLLM_USE_POD_ATTN=1
-export VLLM_USE_TEST_SIMPLE_SCHEDULER=1
+export VLLM_SCHEDULE_ONE_PREFILL=1
 # install quart first -- required for disagg prefill proxy serve
 if python3 -c "import quart" &> /dev/null; then
     echo "Quart is already installed."
@@ -37,7 +37,7 @@ CUDA_VISIBLE_DEVICES=6,7 python3 \
     --block-size 64 \
     --dtype float16 \
     --enable-prefix-caching \
-    --enable_chunked_prefill False \
+    --enable-chunked-prefill \
     --max-model-len 10000 \
     --gpu-memory-utilization 0.8 &
     # --collect_detailed_traces all \
