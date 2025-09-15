@@ -986,7 +986,15 @@ class FlashAttentionImpl(AttentionImpl):
         decode_meta = attn_metadata.decode_metadata
         # print(f"kv_cache.shape={kv_cache.shape}")
         if use_pod_attn: # not profiling
-            if prefill_meta and not (kv_cache is None or kv_cache.numel() == 0 or prefill_meta.block_tables is None
+            if prefill_meta is None:
+                k_p = None
+                v_p = None
+                cu_seqlens_q_p = None
+                max_seqlen_q_p = None
+                cu_seqlens_k_p = None
+                max_seqlen_k_p = None
+                block_table_p = None
+            elif not (kv_cache is None or kv_cache.numel() == 0 or prefill_meta.block_tables is None
                     or prefill_meta.block_tables.numel() == 0):
                 k_p = key_cache
                 v_p = value_cache
@@ -1006,8 +1014,10 @@ class FlashAttentionImpl(AttentionImpl):
                 max_seqlen_q_p = q_seq_len
                 max_seqlen_k_p = k_seq_len
                 block_table_p = None
-            
-
+            if decode_meta:
+                print(decode_meta.max_decode_query_len if decode_meta else None)
+                print(decode_meta.seq_lens_tensor if decode_meta else None)
+                print(decode_meta.query_start_loc.shape)
             pod_attn.true_fused_nseg_attn_varlen_func(
                 query,
                 k_p,
@@ -1031,8 +1041,8 @@ class FlashAttentionImpl(AttentionImpl):
                 alibi_slopes=alibi_slopes,
                 softcap=logits_soft_cap,
                 out = output,
-                seqlens_q_block_p=prefill_meta.seqlens_q_block if prefill_meta else None,
-                seqused_k_block_p=prefill_meta.seqused_k_block if prefill_meta else None,
+                # seqlens_q_block_p=prefill_meta.seqlens_q_block if prefill_meta else None,
+                # seqused_k_block_p=prefill_meta.seqused_k_block if prefill_meta else None,
             )
             return output
 
