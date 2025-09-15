@@ -43,6 +43,7 @@ from vllm.vllm_flash_attn import flash_attn_with_kvcache as _flash_attn_with_kvc
 
 import os
 use_pod_attn = os.getenv('VLLM_USE_POD_ATTN') == '1'
+import pod_attn
 
 logger = init_logger(__name__)
 
@@ -984,70 +985,55 @@ class FlashAttentionImpl(AttentionImpl):
         prefill_meta = attn_metadata.prefill_metadata
         decode_meta = attn_metadata.decode_metadata
         # print(f"kv_cache.shape={kv_cache.shape}")
-        if use_pod_attn and kv_cache.shape[0] == 2 and (not prefill_meta or prefill_meta.num_prefills <= 1): # not profiling
-            p_query, p_kcache, p_vcache, block_table_p = None, None, None, None
-            if prefill_meta:
-                assert prefill_meta.num_prefills <= 1, "Multiple prefill cache lengths not supported"
-                if prefill_meta.num_prefills == 1:
-                    p_query = query.unsqueeze(0)
-                    p_kcache = key[:num_prefill_kv_tokens].unsqueeze(0)
-                    p_vcache = value[:num_prefill_kv_tokens].unsqueeze(0)
-                    # print(f"prefill_meta.seq_lens[0]={prefill_meta.seq_lens[0]}")
-                    if prefill_meta.block_tables_list is not None and len(prefill_meta.block_tables_list[0]) > 0:
-                        block_table_p = prefill_meta.block_tables
+        if use_pod_attn: # not profiling
+            if prefill_meta and not (kv_cache is None or kv_cache.numel() == 0 or prefill_meta.block_tables is None
+                    or prefill_meta.block_tables.numel() == 0):
+                k_p = key_cache
+                v_p = value_cache
+                cu_seqlens_q_p = prefill_meta.query_start_loc
+                max_seqlen_q_p = prefill_meta.max_query_len
+                cu_seqlens_k_p = prefill_meta.seq_lens_tensor
+                max_seqlen_k_p = max(prefill_meta.seq_lens)
+                block_table_p = prefill_meta.block_tables
+            else:
+                q_seq_start_loc, q_seq_len, k_seq_start_loc, k_seq_len = \
+                    _get_query_key_seq_metadata(prefill_meta, True, attn_type)
 
-            d_query, d_k, d_v, cache_seqlens_d, block_table_d = None, None, None, None, None
-            if decode_meta:
-                batch_size = decode_meta.num_decode_tokens
-                loc_q = prefill_meta.max_query_len if prefill_meta else 0
-                loc_k = prefill_meta.seq_lens[0] if prefill_meta else 0
-                # print(f"###batchsize={decode_meta.num_decode_tokens}, loc_q={loc_q},loc_k={loc_k}")
-                if batch_size > 0:
-                    d_query = decode_query.unsqueeze(1)
-                    d_k = key[loc_k:].unsqueeze(1)
-                    d_v = value[loc_k:].unsqueeze(1)
-                    cache_seqlens_d = decode_meta.seq_lens_tensor
-                (
-                    seq_lens_arg,
-                    _,
-                    block_table_d,
-                ) = get_seq_len_block_table_args(decode_meta, False, attn_type)
-            # print(f"seqlens_arg={seq_lens_arg}")
-            # print(f"###query.shape={query.shape}")
-            # print(f"###p_query.shape={p_query.shape if p_query != None else None}")
-            # print(f"###d_query.shape={d_query.shape if d_query != None else None}")
-            # print(f"###cache_seqlens={cache_seqlens_d}")
-            # print(f"block_table_d={block_tables_arg}")
-            import pod_attn            
-            # if p_query is not None:
-            #     print(f'q.shape={p_query.shape}, k.shape={p_kcache.shape}, v.shape={p_vcache.shape}')
-            #     print(f"q={p_query[:, -2:, :, :]}")
-            #     print(f"k={p_kcache[:, -2:, :, :]}")
-            #     print(f"v={p_vcache[:, -2:, :, :]}")
-            # print(f"block_table_p={block_table_p}")
-            # print("pod attn.")
-            out_p, out_d = pod_attn.true_fused_nseg_attn_with_kvcache(
-                # p_query, p_kcache, p_vcache,
-                p_query,
-                kv_cache[0] if block_table_p is not None else p_kcache,
-                kv_cache[1] if block_table_p is not None else p_vcache,
-                d_query, kv_cache[0], kv_cache[1], k=None, v=None,
-                rotary_cos=None, rotary_sin=None, cache_seqlens_p = None,
-                cache_seqlens_d = cache_seqlens_d, cache_batch_idx = None,
-                softmax_scale=softmax_scale, causal=True, window_size=(-1, -1), rotary_interleaved=True, fused_params=15,
-                block_table_p=block_table_p,
+                k_p = key[:num_prefill_kv_tokens]
+                v_p = value[:num_prefill_kv_tokens]
+                cu_seqlens_q_p = q_seq_start_loc
+                cu_seqlens_k_p = k_seq_start_loc
+                max_seqlen_q_p = q_seq_len
+                max_seqlen_k_p = k_seq_len
+                block_table_p = None
+            
+
+            pod_attn.true_fused_nseg_attn_varlen_func(
+                query,
+                k_p,
+                v_p,
+                decode_query,
+                key_cache if decode_meta else None,
+                value_cache if decode_meta else None,
+                cu_seqlens_q_p = cu_seqlens_q_p,
+                max_seqlen_q_p = max_seqlen_q_p,
+                cu_seqlens_k_p = cu_seqlens_k_p,
+                max_seqlen_k_p = max_seqlen_k_p,
+                cu_seqlens_q_d = decode_meta.query_start_loc if decode_meta else None,
+                max_seqlen_q_d = decode_meta.max_decode_query_len if decode_meta else None,
+                cu_seqlens_k_d = None,
+                max_seqlen_k_d = decode_meta.max_decode_seq_len if decode_meta else None,
+                block_table_p = block_table_p,
+                block_table_d = decode_meta.block_tables if decode_meta else None,
+                softmax_scale = softmax_scale,
+                causal=True,
+                window_size=window_size,
+                alibi_slopes=alibi_slopes,
+                softcap=logits_soft_cap,
+                out = output,
                 seqlens_q_block_p=prefill_meta.seqlens_q_block if prefill_meta else None,
                 seqused_k_block_p=prefill_meta.seqused_k_block if prefill_meta else None,
-                blocks_in_batch_p=prefill_meta.blocks_in_batch if prefill_meta else None,
-                block_table_d=block_table_d,
-                seqlens_q_block_d=None,
-                seqused_k_block_d=None,
-                blocks_in_batch_d=None,
             )
-            if p_query is not None:
-                output[:num_prefill_query_tokens].copy_(out_p.squeeze(0))
-            if d_query is not None:
-                output[num_prefill_query_tokens:].copy_(out_d.squeeze(1))
             return output
 
         if prefill_meta := attn_metadata.prefill_metadata:
