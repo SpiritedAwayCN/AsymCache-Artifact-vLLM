@@ -17,15 +17,16 @@ from transformers import (
 
 BASE_DIR = '/home/pkuhetu/sca/dataset/LEval'
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
-API_URL = 'http://162.105.146.217:8047/v1/completions'
+API_URL = 'http://172.24.230.34:8047/v1/completions'
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--div', '-d', type=int, default=80)
 parser.add_argument('--qps', '-q', type=float, default=0.5)
+parser.add_argument('--half_life', '-hl', type=int, default=10)
+parser.add_argument('--policy', '-p', type=str, choices=['mwf', 'lru', 'lfu'], default='mwf')
 args = parser.parse_args()
 
-output_file_name = f"outputs_q{args.qps}_d{args.div}.jsonl"
-
+output_file_name = f"LEval_simulator_{args.policy}_qps{args.qps}_div{args.div}_h{args.half_life}.jsonl"
 df = pd.read_csv(f'./leval_data/outputs_q{args.qps}_d{args.div}.csv')
 
 # model = "meta-llama/Meta-Llama-3.1-8B-Instruct"
@@ -84,7 +85,7 @@ async def fetch(prompt, answer, output_file):
     async with aiohttp.ClientSession(timeout=AIOHTTP_TIMEOUT) as session:
         payload = {
             "model": model,
-            "prompt": prompt[:2000],
+            "prompt": prompt[:15000],
             "std_output_tokens": answer,
             "max_tokens": 8192,
         }

@@ -255,7 +255,7 @@ class LFUEvictor(Evictor):
 
         import sys
         import os
-        module_directory = "/home/tzl/vllm-dev/csrc/c_set"
+        module_directory = "/home/pkuhetu/sca/yilin/vllm-dev/csrc/c_set"
         if not os.path.exists(module_directory):
             raise FileNotFoundError(f"Module directory {module_directory} not found!")
         sys.path.append(module_directory)
@@ -428,11 +428,11 @@ def make_evictor(eviction_policy: EvictionPolicy, delta_fun = lambda x: x) -> Ev
     elif eviction_policy == EvictionPolicy.LFU:
         return LFUEvictor(BASE_FREQ)
     elif eviction_policy == EvictionPolicy.MWF:
-        c = (2.91200787e-01 + 1.04221165e-04) // 16
-        k = 2 * 1.04221165e-04
+        c = 2.91200787e-01 + 1.04221165e-04
+        k = 2 * 1.04221165e-04 / 16
         return WeightEvictor(BASE_FREQ, lambda x: k * x + c)
     else:
         # WMF2 shared blocks first
-        c = (2.91200787e-01 + 1.04221165e-04) // 16
-        k = 2 * 1.04221165e-04
+        c = 2.91200787e-01 + 1.04221165e-04
+        k = 2 * 1.04221165e-04 / 16
         return WeightEvictor2(BASE_FREQ, lambda x: k * x + c)
