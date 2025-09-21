@@ -368,6 +368,13 @@ class CpuGpuBlockAllocator(DeviceAwareBlockAllocator):
         device: Device = Device.GPU,
     ) -> List[int]:
         return self._allocators[device].find_cached_blocks_prefix(block_hashes)
+    
+    def find_cached_blocks_multiseg(
+        self,
+        block_hashes: List[int],
+        device: Device = Device.GPU,
+    ) -> Tuple[int, List[int]]:
+        return self._allocators[device].find_cached_blocks_multiseg(block_hashes)
 
 
 class NullBlock(Block):

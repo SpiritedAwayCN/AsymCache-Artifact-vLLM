@@ -749,15 +749,15 @@ class PrefixCachingBlockAllocator(BlockAllocator):
                 elif segment_status == 3:
                     segment_status += 1
                     suffix_computed_block_locs[2] = logical_idx * self._block_size
-                elif segment_status == 2:
-                    segment_status = 3
-                    suffix_computed_block_locs[1] = logical_idx * self._block_size
-                elif segment_status == 0:
-                    segment_status = 1
-                    first_compute_start = logical_idx * self._block_size
-                elif segment_status == 4:
-                    segment_status = 5
-                    suffix_computed_block_locs[3] = logical_idx * self._block_size
+            elif segment_status == 2:
+                segment_status = 3
+                suffix_computed_block_locs[1] = logical_idx * self._block_size
+            elif segment_status == 0:
+                segment_status = 1
+                first_compute_start = logical_idx * self._block_size
+            elif segment_status == 4:
+                segment_status = 5
+                suffix_computed_block_locs[3] = logical_idx * self._block_size
         
         if segment_status == 2:
             suffix_computed_block_locs[1] = logical_idx * self._block_size
@@ -767,6 +767,8 @@ class PrefixCachingBlockAllocator(BlockAllocator):
         
         if first_compute_start == -1:
             first_compute_start = logical_idx * self._block_size
+        
+        # logger.info(f"find_cached_blocks_multiseg: first_compute_start={first_compute_start}, suffix_computed_block_locs={suffix_computed_block_locs}")
         
         return first_compute_start, suffix_computed_block_locs
 
@@ -1178,7 +1180,7 @@ class ComputedBlocksTracker:
         #             seq.seq_id, seq.suffix_computed_block_locs)
 
         if seq.is_prefill():
-            if seq.suffix_computed_block_locs is None:
+            if not seq.seq_id in self._seq_id_to_num_tokens_computed:
                 # If the sequence does not have suffix_computed_block_locs,
                 # we generate it here.
                 self._seq_id_to_num_tokens_computed[seq.seq_id], seq.suffix_computed_block_locs = self._allocator.find_cached_blocks_multiseg(block_hashes)
@@ -1195,6 +1197,7 @@ class ComputedBlocksTracker:
             seg1 = max(0, self._seq_id_to_num_tokens_computed[seq.seq_id] - start_idx)
             seg2 = max(0, min(end_idx, seq.suffix_computed_block_locs[1]) - max(start_idx, seq.suffix_computed_block_locs[0]))
             seg3 = max(0, min(end_idx, seq.suffix_computed_block_locs[3]) - max(start_idx, seq.suffix_computed_block_locs[2]))
+            logger.debug(f"seq_id {seq.seq_id} has suffix_computed_block_locs {seq.suffix_computed_block_locs}, start_idx {start_idx}, end_idx {end_idx}, seg1 {seg1}, seg2 {seg2}, seg3 {seg3}")
             return seg1 + seg2 + seg3
 
         # This is O(logN), where N is the number of blocks.

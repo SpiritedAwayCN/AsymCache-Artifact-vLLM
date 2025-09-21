@@ -2274,6 +2274,7 @@ class Scheduler:
                 partial_prefill_metadata,
             )
 
+        # logger.info(f"Request {seq_group.request_id} has {num_uncached_new_tokens} uncached new tokens and {num_cached_new_tokens} cached new tokens.")
         return num_uncached_new_tokens, num_cached_new_tokens
 
     @staticmethod
@@ -2340,7 +2341,11 @@ class Scheduler:
             # NB: In the case where num_new_tokens < budget, we are
             # finishing prefill for this sequence, so we do not need to
             # allocate a full block.
-
+        
+        logger.debug(f"num_new_tokens before chunking: {num_new_tokens}, "
+                    f"remaining_token_budget: {remaining_token_budget}, "
+                    f"prefill_slot_budget: {prefill_slot_budget}")
+        
         num_new_tokens = min(num_new_tokens, remaining_token_budget,
                              prefill_slot_budget)
 
