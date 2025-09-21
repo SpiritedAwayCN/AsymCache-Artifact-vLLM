@@ -712,6 +712,63 @@ class PrefixCachingBlockAllocator(BlockAllocator):
             self._block_pool.free_block(tmp_block)
 
             block.block_id = block_id  # Assign block_id
+    
+    def find_cached_blocks_multiseg(self, block_hashes: List[int]) -> Tuple[int, List[int]]:
+        """
+        Given a list of block hashes, check the cached status one by one, 
+        and generate first_compute_start and suffix_computed_block_locs.
+        
+        Args:
+            block_hashes (List[int]): The list of block hashes.
+        
+        Returns:
+            Tuple[int, List[int]]: first_compute_start and suffix_computed_block_locs.
+                first_compute_start is the index of the first block that is not cached.
+                suffix_computed_block_locs is a list of indices of blocks that are 
+                computed in the suffix.
+        """
+        
+        def _block_is_cached(block_hash: PrefixHash) -> bool:
+            if block_hash not in self._cached_blocks:
+                return False
+
+            cached_block_id = self._cached_blocks[block_hash]
+            # We only consider the blocks that are marked as computed.
+            return self.block_is_computed(cached_block_id)
+        
+        first_compute_start = len(block_hashes)
+        suffix_computed_block_locs = [0, 0, 0, 0]
+        
+        segment_status = 0
+        
+        for logical_idx, block_hash in enumerate(block_hashes):
+            if _block_is_cached(block_hash):
+                if segment_status == 1:
+                    segment_status += 1
+                    suffix_computed_block_locs[0] = logical_idx * self._block_size
+                elif segment_status == 3:
+                    segment_status += 1
+                    suffix_computed_block_locs[2] = logical_idx * self._block_size
+                elif segment_status == 2:
+                    segment_status = 3
+                    suffix_computed_block_locs[1] = logical_idx * self._block_size
+                elif segment_status == 0:
+                    segment_status = 1
+                    first_compute_start = logical_idx * self._block_size
+                elif segment_status == 4:
+                    segment_status = 5
+                    suffix_computed_block_locs[3] = logical_idx * self._block_size
+        
+        if segment_status == 2:
+            suffix_computed_block_locs[1] = logical_idx * self._block_size
+        
+        if segment_status == 4:
+            suffix_computed_block_locs[3] = logical_idx * self._block_size
+        
+        if first_compute_start == -1:
+            first_compute_start = logical_idx * self._block_size
+        
+        return first_compute_start, suffix_computed_block_locs
 
     def find_cached_blocks_prefix(self, block_hashes: List[int]) -> List[int]:
         """
@@ -1086,22 +1143,28 @@ class ComputedBlocksTracker:
 
         self._seq_id_to_blocks_hashes[seq.seq_id] = block_hashes_recorded
 
-    def get_num_cached_tokens(self, seq: Sequence, firstseg_only: bool = False) -> int:
+    def get_num_cached_tokens(self, seq: Sequence, firstseg_only: bool = False, start_idx: int = 0, end_idx: int = -1) -> int:
         if not self._enable_caching:
             return 0
 
+        # TODO (chunan):
+        # 1. add new argument start_idx and length, only consider between start_idx and start_idx + length
+        # 2. generate seq.suffix_computed_block_locs here if not exist, not when allocating the sequence
+        # 3. if seq.suffix_computed_block_locs exists, use it to truncate and compute num_cached_tokens directly
+        
         # We always try to update the sequence hashes on the fly.
         # This is to ensure that we don't miss any cached tokens for the
         # sequence during decode.
         # This routine should only update hash for any new blocks too.
         self._update_seq_hashes(seq)
 
+        # NOTE (chunan): this field should store the number of cached tokens in the first seg
         num_computed_tokens_prev = self._seq_id_to_num_tokens_computed.get(
             seq.seq_id, None)
 
         # TODO(rickyx): This hack could be removed once we mark blocks as
         # computed correctly with chunked prefills.
-        if num_computed_tokens_prev is not None and seq.is_prefill() and not firstseg_only:
+        if num_computed_tokens_prev is not None and seq.is_prefill() and firstseg_only:
             # For a sequence that is still in prefill, we don't
             # recompute the number of cached tokens.
             # This also handles correctly chunked prefill since currently
@@ -1113,18 +1176,27 @@ class ComputedBlocksTracker:
         block_hashes = self._seq_id_to_blocks_hashes[seq.seq_id]
         # logger.info("seq_id %d has suffix_computed_block_locs %s",
         #             seq.seq_id, seq.suffix_computed_block_locs)
-        if seq.is_prefill() and firstseg_only and seq.suffix_computed_block_locs is not None and seq.suffix_computed_block_locs[0] > 0:
-            # If the sequence has a suffix computed block, we only consider
-            # the blocks before the suffix computed block.
-            # This is because the suffix computed block is not part of the
-            # prefix caching.
-            logger.info("truncating block hashes for seq_id %d to %d blocks",
-                        seq.seq_id, seq.suffix_computed_block_locs[0] // self._block_size)
-            block_hashes = block_hashes[:(seq.suffix_computed_block_locs[0] // self._block_size)]
+
         if seq.is_prefill():
-            # TODO(chenyilei): use block_hashes = ... if chunked_prefill is enabled.
-            block_hashes = block_hashes[:(seq.get_num_computed_tokens() // self._block_size)]
-            pass
+            if seq.suffix_computed_block_locs is None:
+                # If the sequence does not have suffix_computed_block_locs,
+                # we generate it here.
+                self._seq_id_to_num_tokens_computed[seq.seq_id], seq.suffix_computed_block_locs = self._allocator.find_cached_blocks_multiseg(block_hashes)
+            
+            if firstseg_only:
+                return self._seq_id_to_num_tokens_computed[seq.seq_id]
+            
+            start_idx *= self._block_size
+            if end_idx == -1:
+                end_idx = len(block_hashes) + self._block_size
+            else:
+                end_idx *= self._block_size
+
+            seg1 = max(0, self._seq_id_to_num_tokens_computed[seq.seq_id] - start_idx)
+            seg2 = max(0, min(end_idx, seq.suffix_computed_block_locs[1]) - max(start_idx, seq.suffix_computed_block_locs[0]))
+            seg3 = max(0, min(end_idx, seq.suffix_computed_block_locs[3]) - max(start_idx, seq.suffix_computed_block_locs[2]))
+            return seg1 + seg2 + seg3
+
         # This is O(logN), where N is the number of blocks.
         num_cached_blocks = len(
             self._allocator.find_cached_blocks_prefix(block_hashes))

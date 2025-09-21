@@ -584,8 +584,8 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
         else:
             return AllocStatus.LATER
 
-    def get_num_cached_tokens(self, seq: Sequence) -> int:
+    def get_num_cached_tokens(self, seq: Sequence, first_seg: bool = False, start_idx: int = 0, end_idx: int = -1) -> int:
         """Get the number of tokens in blocks that are already computed and
         cached in the block manager for the sequence.
         """
-        return self._computed_blocks_tracker.get_num_cached_tokens(seq)
+        return self._computed_blocks_tracker.get_num_cached_tokens(seq, first_seg, start_idx, end_idx)

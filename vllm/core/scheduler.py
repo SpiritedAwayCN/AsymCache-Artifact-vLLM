@@ -2155,29 +2155,29 @@ class Scheduler:
             # evictor meaning that it's not yet allocated. However, we don't
             # exclude such tokens in the cache count because it will be
             # guaranteed to be allocated later if the sequence can be allocated.
-            num_cached_tokens_seq = self.block_manager.get_num_cached_tokens(
-                seq)
+            num_cached_new_tokens_seq = self.block_manager.get_num_cached_tokens(
+                seq, start_idx=num_computed_tokens_seq)
 
             # Sanity check.
-            if num_cached_tokens_seq < num_computed_tokens_seq:
-                # This should only happen with chunked prefill, and
-                # the seq is still in prefill. The `num_cached_tokens_seq`
-                # is the value we calculated on scheduling the first prefill.
-                # For subsequent continuous prefill steps, we cached the
-                # number of cache tokens for the sequence so the cached token
-                # count could be less than the number of computed tokens.
-                # See comments on `ComputedBlocksTracker` for more details.
-                assert (
-                    seq.is_prefill() and seq.status == SequenceStatus.RUNNING
-                    and self.scheduler_config.chunked_prefill_enabled
-                ), ("Number of cached tokens should not be less than the "
-                    "number of computed tokens for a sequence that's still "
-                    f"in prefill. But there are {num_cached_tokens_seq} cached "
-                    f"tokens and {num_computed_tokens_seq} computed tokens "
-                    f"for sequence {seq.seq_id}.")
+            # if num_cached_tokens_seq < num_computed_tokens_seq:
+            #     # This should only happen with chunked prefill, and
+            #     # the seq is still in prefill. The `num_cached_tokens_seq`
+            #     # is the value we calculated on scheduling the first prefill.
+            #     # For subsequent continuous prefill steps, we cached the
+            #     # number of cache tokens for the sequence so the cached token
+            #     # count could be less than the number of computed tokens.
+            #     # See comments on `ComputedBlocksTracker` for more details.
+            #     assert (
+            #         seq.is_prefill() and seq.status == SequenceStatus.RUNNING
+            #         and self.scheduler_config.chunked_prefill_enabled
+            #     ), ("Number of cached tokens should not be less than the "
+            #         "number of computed tokens for a sequence that's still "
+            #         f"in prefill. But there are {num_cached_tokens_seq} cached "
+            #         f"tokens and {num_computed_tokens_seq} computed tokens "
+            #         f"for sequence {seq.seq_id}.")
 
-            num_cached_new_tokens_seq = max(
-                0, num_cached_tokens_seq - num_computed_tokens_seq)
+            # num_cached_new_tokens_seq = max(
+            #     0, num_cached_tokens_seq - num_computed_tokens_seq)
             num_uncached_new_tokens_seq = (all_num_new_tokens_seq -
                                            num_cached_new_tokens_seq)
 
@@ -2195,6 +2195,8 @@ class Scheduler:
             # Chunk if a running request cannot fit in the given budget.
             # If number of seq > 1, it means it is doing beam search
             # in a decode phase. Do not chunk.
+            
+            # TODO (chunan):
             num_uncached_new_tokens = self._chunk_new_tokens_to_schedule(
                 self.scheduler_config,
                 self.cache_config,

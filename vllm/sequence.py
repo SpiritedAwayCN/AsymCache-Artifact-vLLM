@@ -955,7 +955,7 @@ class SequenceGroup:
                     locs[0], locs[1] = locs[2], locs[3]
                     locs[2], locs[3] = 0, 0
         # TODO(chunan): Update the self.suffix_computed_block_locs, using the first_seq
-        self.suffix_computed_block_locs = self.first_seq.suffix_computed_block_locs
+        # self.set_suffix_computed_block_locs(self.first_seq.suffix_computed_block_locs)
 
     def get_num_uncomputed_tokens(self) -> int:
         num_uncomputed_tokens = 0

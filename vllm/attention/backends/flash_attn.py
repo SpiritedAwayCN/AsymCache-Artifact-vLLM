@@ -1160,7 +1160,7 @@ class FlashAttentionImpl(AttentionImpl):
                         block_table=prefill_meta.block_tables,
                         softcap=logits_soft_cap,
                         out=prefill_output,
-                        fa_version=self.vllm_flash_attn_version,
+                        fa_version=2, # self.vllm_flash_attn_version
                         q_descale=layer._q_scale.expand(descale_shape),
                         k_descale=layer._k_scale.expand(descale_shape),
                         v_descale=layer._v_scale.expand(descale_shape),
