@@ -3,7 +3,7 @@ import pandas as pd
 import os
 import argparse
 
-BASE_DIR = '/processing_data/infra/sca/dataset/LEval'
+BASE_DIR = '/home/pkuhetu/sca/yilin/vllm-dev/examples/test/e2e-exp/leval_data'
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--div', type=int, default=80)

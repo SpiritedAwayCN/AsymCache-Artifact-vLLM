@@ -29,7 +29,7 @@ wait_for_server() {
 }
 
 # prefilling instance, which is the KV producer
-CUDA_VISIBLE_DEVICES=6,7 python3 \
+CUDA_VISIBLE_DEVICES=4,5,6,7 python3 \
     -m vllm.entrypoints.openai.api_server \
     --model LargeWorldModel/LWM-Text-1M \
     -tp 2 \

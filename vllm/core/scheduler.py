@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-
+import logging
+from datetime import datetime
 import enum
 import os
 import random
@@ -22,6 +23,65 @@ from vllm.sequence import (Sequence, SequenceData, SequenceGroup,
 from vllm.utils import Device, PyObjectCache
 
 logger = init_logger(__name__)
+DETAILED_INFO = logging.INFO + 1
+logging.addLevelName(DETAILED_INFO, 'DETAILED_INFO')
+
+def detailed_info(self, message, *args, **kwargs):
+    if self.isEnabledFor(DETAILED_INFO):
+        self._log(DETAILED_INFO, message, args, **kwargs)
+
+logging.Logger.detailed_info = detailed_info
+logger.setLevel(logging.INFO)
+
+file_handler = logging.FileHandler('schedule_detail.log')
+file_handler.setLevel(DETAILED_INFO)
+
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
+
+def log_sequence_group_details(seq_groups: List['ScheduledSequenceGroup'], 
+                               group_type: str, 
+                               source: str = ""):
+    if not seq_groups:
+        logger.detailed_info(f"没有{source}的{group_type} sequence groups")
+        return
+    
+    # logger.detailed_info("=" * 80)
+    # logger.detailed_info(f"{source.upper()} - {group_type.upper()} SequenceGroups:")
+    # logger.detailed_info("=" * 80)
+
+    for group_idx, scheduled_group in enumerate(seq_groups):
+        seq_group = scheduled_group.seq_group
+        chunksize = scheduled_group.token_chunk_size
+        logger.detailed_info(f"{group_type.upper()} Group [{group_idx + 1}/{len(seq_groups)}] - {source}:")
+
+        if seq_group.seqs:
+            logger.detailed_info(f"  Request ID: {seq_group.request_id}, 包含 {len(seq_group.seqs)} 个序列:")
+            for seq_idx, seq in enumerate(seq_group.seqs):
+                if group_type == 'prefill':
+                    chunk_idx = seq_group.chunk_idx
+                    prompt_tokens = len(seq.prompt_token_ids) if hasattr(seq, 'prompt_token_ids') else 0
+                    logger.detailed_info(f"    Seq [{seq_idx + 1}], Seq ID: {seq.seq_id}, Prompt tokens: {prompt_tokens}, Chunk idx: {chunk_idx}, Chunk size: {chunksize}")
+                if group_type == 'decode':
+                    output_tokens = seq.get_output_len()
+                    logger.detailed_info(f"    Seq [{seq_idx + 1}], Seq ID: {seq.seq_id}, New output tokens: {output_tokens}")
+
+def log_all_sequence_groups(prefills, running_scheduled, swapped_in):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    logger.detailed_info("")
+    logger.detailed_info(f"调度时间: {timestamp}")
+
+    # Prefill groups
+    logger.detailed_info("PREFILL 序列组:")
+    log_sequence_group_details(prefills.seq_groups, 'prefill', 'Prefills')
+    log_sequence_group_details(running_scheduled.prefill_seq_groups, 'prefill', 'Running')
+    log_sequence_group_details(swapped_in.prefill_seq_groups, 'prefill', 'Swapped')
+    
+    # Decode groups
+    logger.detailed_info("DECODE 序列组:")
+    log_sequence_group_details(running_scheduled.decode_seq_groups, 'decode', 'Running')
+    log_sequence_group_details(swapped_in.decode_seq_groups, 'decode', 'Swapped')
 
 # Test-only. If configured, decode is preempted with
 # ARTIFICIAL_PREEMPTION_PROB% probability.
@@ -1601,6 +1661,12 @@ class Scheduler:
         num_prefill_groups = (len(prefills.seq_groups) +
                               len(swapped_in.prefill_seq_groups) +
                               len(running_scheduled.prefill_seq_groups))
+        for _, scheduled_group in enumerate(prefills.seq_groups):
+            scheduled_group.seq_group.chunk_idx += 1
+        for _, scheduled_group in enumerate(swapped_in.prefill_seq_groups):
+            scheduled_group.seq_group.chunk_idx += 1
+        for _, scheduled_group in enumerate(running_scheduled.prefill_seq_groups):
+            scheduled_group.seq_group.chunk_idx += 1
         # If all prompts, then we set num_lookahead_slots to 0
         # this allows us to go through the `no_spec` path in
         # `spec_decode_worker.py`
@@ -1609,6 +1675,7 @@ class Scheduler:
                                (all_prefills
                                 and not self.scheduler_config.is_multi_step)
                                else running_scheduled.num_lookahead_slots)
+        log_all_sequence_groups(prefills, running_scheduled, swapped_in)
         return SchedulerOutputs(
             scheduled_seq_groups=scheduled_seq_groups,
             num_prefill_groups=num_prefill_groups,

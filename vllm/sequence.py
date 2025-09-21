@@ -754,7 +754,7 @@ class SequenceGroup:
         self.arrival_time = arrival_time
         self.is_single_seq = len(seqs) == 1
         self.seqs_dict = {seq.seq_id: seq for seq in seqs}
-
+        self.chunk_idx = 0
         self.sampling_params = sampling_params
         self.metrics = RequestMetrics(arrival_time=arrival_time,
                                       last_token_time=arrival_time,

@@ -1,5 +1,6 @@
 """A block manager that manages token blocks."""
 import math
+import os
 import threading
 from abc import ABC, abstractmethod
 from itertools import count, takewhile
@@ -109,8 +110,16 @@ class CachedBlockAllocator(BlockAllocatorBase):
         self.current_num_blocks = 0
         self.cached_blocks: Dict[int, PhysicalTokenBlock] = {}
         
-
+        policy = os.environ.get('POLICY')
+        if policy == 'mwf':
+            eviction_policy = EvictionPolicy.MWF
+        elif policy == 'lru':
+            eviction_policy = EvictionPolicy.LRU2
+        elif policy == 'lfu':
+            eviction_policy = EvictionPolicy.LFU
+        
         self.evictor: Evictor = make_evictor(eviction_policy)
+        print("self.evictor!!!!!!!!!!!!!!!!! ", self.evictor)
         self.buffer_evictor : BufferedEvictor = BufferedEvictor(self.evictor)
         
         self.default_hash_ctr = count()
