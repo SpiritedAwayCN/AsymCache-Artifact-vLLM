@@ -15,9 +15,11 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
-BASE_DIR = '/home/pkuhetu/sca/dataset/LEval'
+BASE_DIR = '/jizhicfs/marvinhjia/sca/'
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
-API_URL = 'http://172.24.230.34:8047/v1/completions'
+# get ip equivalent to $(hostname -I | awk '{print $1}')
+vllm_host_ip = os.popen("hostname -I | awk '{print $1}'").read().strip()
+API_URL = f'http://{vllm_host_ip}:8048/v1/completions'
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--div', '-d', type=int, default=80)

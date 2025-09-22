@@ -40,7 +40,7 @@ class PoissonRequestIntervalGenerator:
 
 
 # 示例
-generator = PoissonRequestIntervalGenerator(qps=0.5, seed=42)
+generator = PoissonRequestIntervalGenerator(qps=2.0, seed=42)
 n = 2378  # 生成2378个请求的时间戳列表
 timestamp_list = generator.generate_timestamps(n)
 print(timestamp_list)

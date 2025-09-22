@@ -736,7 +736,7 @@ class PrefixCachingBlockAllocator(BlockAllocator):
             # We only consider the blocks that are marked as computed.
             return self.block_is_computed(cached_block_id)
         
-        first_compute_start = len(block_hashes)
+        first_compute_start = len(block_hashes) * self._block_size
         suffix_computed_block_locs = [0, 0, 0, 0]
         
         segment_status = 0
@@ -1184,6 +1184,7 @@ class ComputedBlocksTracker:
                 # If the sequence does not have suffix_computed_block_locs,
                 # we generate it here.
                 self._seq_id_to_num_tokens_computed[seq.seq_id], seq.suffix_computed_block_locs = self._allocator.find_cached_blocks_multiseg(block_hashes)
+                logger.info(f"seq_id {seq.seq_id} has suffix_computed_block_locs {seq.suffix_computed_block_locs}, first_compute_start {self._seq_id_to_num_tokens_computed[seq.seq_id]}")
             
             if firstseg_only:
                 return self._seq_id_to_num_tokens_computed[seq.seq_id]

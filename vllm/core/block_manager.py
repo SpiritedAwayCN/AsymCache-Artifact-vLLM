@@ -393,7 +393,9 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
             all_blocks = self.block_tables[seq.seq_id].physical_block_ids
             num_cached_tokens = (
                 self._computed_blocks_tracker.get_num_cached_tokens(seq, firstseg_only=firstseg_only))
-            assert num_cached_tokens % self.block_size == 0
+            assert num_cached_tokens % self.block_size == 0, \
+                f"num_cached_tokens {num_cached_tokens} is not multiple of block_size {self.block_size}. seq: {seq}."
+                
             num_cached_blocks = num_cached_tokens // self.block_size
             computed_block_ids = all_blocks[:num_cached_blocks]
             computed_seq_block_ids.append(computed_block_ids)

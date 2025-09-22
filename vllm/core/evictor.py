@@ -122,6 +122,7 @@ class LRUEvictor(Evictor):
                     if b in self.free_table:
                         self.free_table[b].last_accessed = now
                 # print(f"protect={self.protect_blocks}")
+                logger.info(f"Evicting block_id {block_id} with content_hash {content_hash}, last_accessed {last_accessed}, num_hashed_tokens {-v}")
                 return block_id, content_hash
 
         raise ValueError("No usable cache memory left")
