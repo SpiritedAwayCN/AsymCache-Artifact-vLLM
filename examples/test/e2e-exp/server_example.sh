@@ -10,6 +10,7 @@ export TRANSFORMERS_OFFLINE=1
 export VLLM_USE_V1=0
 export VLLM_USE_POD_ATTN=1
 export VLLM_SCHEDULE_ONE_PREFILL=1
+export VLLM_EVICTOR_POLICY=mwf
 # install quart first -- required for disagg prefill proxy serve
 if python3 -c "import quart" &> /dev/null; then
     echo "Quart is already installed."

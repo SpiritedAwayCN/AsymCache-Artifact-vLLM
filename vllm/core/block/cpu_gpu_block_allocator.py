@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
+import os
 from typing import Dict, FrozenSet, List, Optional, Tuple
 
 from vllm.core.block.interfaces import (Block, BlockAllocator, BlockId,
                                         DeviceAwareBlockAllocator)
 from vllm.core.block.naive_block import NaiveBlock, NaiveBlockAllocator
 from vllm.core.block.prefix_caching_block import PrefixCachingBlockAllocator
+from vllm.core.evictor import EvictionPolicy
 from vllm.platforms import current_platform
 from vllm.utils import Device
 
@@ -78,16 +80,28 @@ class CpuGpuBlockAllocator(DeviceAwareBlockAllocator):
                 block_ids=cpu_block_ids,
             )
         elif allocator_type == "prefix_caching":
+            evictor_policy_env = os.environ.get("VLLM_EVICTOR_POLICY", "lru")
+            
+            if evictor_policy_env == "lru":
+                evictor_policy = EvictionPolicy.LRU
+            elif evictor_policy_env == "mwf":
+                evictor_policy = EvictionPolicy.MWF
+            else:
+                raise ValueError(f"Unknown evictor policy {evictor_policy_env=}")
+            
+            
             gpu_allocator = PrefixCachingBlockAllocator(
                 num_blocks=num_gpu_blocks,
                 block_size=block_size,
                 block_ids=gpu_block_ids,
+                eviction_policy=evictor_policy,
             )
 
             cpu_allocator = PrefixCachingBlockAllocator(
                 num_blocks=num_cpu_blocks,
                 block_size=block_size,
                 block_ids=cpu_block_ids,
+                eviction_policy=evictor_policy,
             )
         else:
             raise ValueError(f"Unknown allocator type {allocator_type=}")
