@@ -915,7 +915,8 @@ class SequenceGroup:
     def set_finished_time(self, time: Optional[float]) -> None:
         """Sets the finished time for Request level timings."""
         self.metrics.finished_time = time
-        self.metrics.total_elapsed_time = time - self.metrics.arrival_time
+        if time is not None:
+            self.metrics.total_elapsed_time = time - self.metrics.arrival_time
     
     def set_suffix_computed_block_locs(self, suffix_computed_block_locs: Optional[List[int]]) -> None:
         self.metrics.suffix_computed_block_locs = suffix_computed_block_locs
