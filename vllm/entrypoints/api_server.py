@@ -57,11 +57,13 @@ async def _generate(request_dict: dict, raw_request: Request) -> Response:
     prompt = request_dict.pop("prompt")
     stream = request_dict.pop("stream", False)
     slo_urgent = request_dict.pop("slo_urgent", 0)
+    slo_dict = request_dict.pop("slo_dict", None)
+    user_id = request_dict.pop("user_id", 0)
     sampling_params = SamplingParams(**request_dict)
     request_id = random_uuid()
 
     assert engine is not None
-    results_generator = engine.generate(prompt, sampling_params, request_id, slo_urgent=slo_urgent)
+    results_generator = engine.generate(prompt, sampling_params, request_id, slo_urgent=slo_urgent, slo_dict=slo_dict, user_id=user_id)
 
     # Streaming case
     async def stream_results() -> AsyncGenerator[bytes, None]:

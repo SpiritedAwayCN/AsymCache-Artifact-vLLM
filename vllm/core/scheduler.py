@@ -1123,7 +1123,8 @@ class Scheduler:
         curr_loras: Optional[Set[int]],
         enable_chunking: bool = False,
         partial_prefill_metadata: Optional[PartialPrefillMetadata] = None,
-        schedule_one=False,
+        max_schedule_prefills: int = -1,
+        schedule_one: bool = False,
     ) -> SchedulerPrefillOutputs:
         """Schedule sequence groups that are in prefill stage.
 
@@ -1168,6 +1169,10 @@ class Scheduler:
         leftover_waiting_sequences: Deque[SequenceGroup] = deque()
 
         blocks_to_offload: List[Tuple[int, int, bool]] = []
+
+        count = 0
+        if schedule_one:
+            max_schedule_prefills = 1
         while self._passed_delay(time.time()) and waiting_queue:
             seq_group = waiting_queue[0]
 
@@ -1307,8 +1312,8 @@ class Scheduler:
             )
             budget.add_num_seqs(seq_group.request_id, num_new_seqs)
 
-            if schedule_one:
-                # print("@@schedule one prefill")
+            count += 1
+            if max_schedule_prefills != -1 and count == max_schedule_prefills:
                 break
 
         # Queue requests that couldn't be scheduled.
@@ -1364,7 +1369,7 @@ class Scheduler:
             budget,
             curr_loras,
             enable_chunking=False,
-            schedule_one=True,
+            max_schedule_prefills=4,
         )
         # print(f"prefill:{len(prefills.seq_groups)}")
         assert (budget.num_batched_tokens

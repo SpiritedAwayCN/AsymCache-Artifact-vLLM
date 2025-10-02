@@ -308,7 +308,8 @@ class RequestOutput:
             encoder_prompt_token_ids = None
             prompt_logprobs = None
         finished_time = time.time() if finished else None
-        seq_group.set_finished_time(finished_time)
+        if finished is not None:
+            seq_group.set_finished_time(finished_time)
 
         init_kwargs = {
             "request_id": seq_group.request_id,

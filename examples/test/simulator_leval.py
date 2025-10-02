@@ -8,9 +8,9 @@ import argparse
 
 from vllm.sequence import Sequence, SequenceGroup, SequenceStatus
 from vllm.transformers_utils.tokenizer_group import TokenizerGroup
-from vllm.core.block_manager_v1 import BlockSpaceManagerV1
-from vllm.core.evictor_v1 import EvictionPolicy
-
+from vllm.core.block_manager import SelfAttnBlockSpaceManager
+from vllm.core.evictor import EvictionPolicy
+from vllm.utils import Device
 from vllm.utils import Counter, is_list_of
 from vllm.engine.arg_utils import EngineArgs
 from vllm.entrypoints.chat_utils import (apply_hf_chat_template,
@@ -46,13 +46,13 @@ params_dict = { # TP -> num_blocks (with block_size=16), A800 80GB
     2 : {'num_gpu_blocks': 13188, 'num_cpu_blocks': 4096},
 }
 
-block_manager = BlockSpaceManagerV1(
+block_manager = SelfAttnBlockSpaceManager(
     block_size=block_size,
     num_gpu_blocks=7204,# params_dict[TP]['num_gpu_blocks'] * 16 // block_size,
     num_cpu_blocks=512, # params_dict[TP]['num_cpu_blocks'] * 16 // block_size,
     sliding_window=None,
     enable_caching=True,
-    evictor_policy=policy,
+    eviction_policy=policy,
 )
 
 seq_counter = Counter()
@@ -129,9 +129,10 @@ def simulate_allocate_block(msgs, chat_template=None):
     for seq in seq_group.get_seqs(status=SequenceStatus.WAITING):
         seq.status = SequenceStatus.RUNNING
     block_manager.access_all_blocks_in_seq(seq, arrival_time + 0.1)
-    
+   
     # Compute
     block_manager.mark_blocks_as_computed(seq_group, len(prompt_token_ids))
+    block_manager.get_num_cached_tokens(seq)
     
     # Free
     for seq in seq_group.get_seqs(status=SequenceStatus.WAITING):
@@ -160,7 +161,7 @@ if __name__ == '__main__':
     with open('./llama-2-chat.jinja', 'r', encoding='utf-8') as file:
         chat_template = file.read()
     
-    BASE_DIR = '/home/infer/chenyilei/datasets/LEval'
+    BASE_DIR = '/jizhicfs/marvinhjia/sca'
     df = pd.read_csv(f'{BASE_DIR}/seqlen_stat_LEval.csv')
     
     index_list = list(range(len(df)))
@@ -218,7 +219,7 @@ if __name__ == '__main__':
     
     
     print('=' * 80)
-    print(f'free table blocks at the end (len={len(block_manager.gpu_allocator.evictor.free_table)})')
+    print(f'free table blocks at the end (len={len(block_manager.block_allocator._allocators[Device.GPU].evictor.free_table)})')
     
-    for block in block_manager.gpu_allocator.evictor.free_table.values():
+    for block in block_manager.block_allocator._allocators[Device.GPU].evictor.free_table.values():
         print(block)

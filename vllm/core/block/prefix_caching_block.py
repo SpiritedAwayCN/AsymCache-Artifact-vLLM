@@ -187,6 +187,8 @@ class PrefixCachingBlockAllocator(BlockAllocator):
 
         cached_block_id = self._cached_blocks.get(block.content_hash, None)
         # print(f"num_tokens_total:{block.num_tokens_total}, id={block.block_id}, cached_blocks={self._cached_blocks.values()}, cached_block_id={cached_block_id}, {self.test_force_nocache_begin}, { self.test_force_nocache_end},if={self.test_force_nocache_begin < block.num_tokens_total <= self.test_force_nocache_end}")
+        # TODO(chenyilei): 
+        # if cached_block_id is not None and block.computed:
         if cached_block_id is not None:
             if self.test_force_nocache_begin < block.num_tokens_total <= self.test_force_nocache_end:
                 # MODIFIED: force ignored cache
