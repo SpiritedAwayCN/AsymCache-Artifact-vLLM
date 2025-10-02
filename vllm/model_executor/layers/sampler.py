@@ -303,6 +303,8 @@ class Sampler(nn.Module):
         )
         # if given standard output tokens, sample next token in std_output_tokens
         for i, seq_group in enumerate(sampling_metadata.seq_groups):
+            if not seq_group.do_sample:
+                continue
             sampling_params = seq_group.sampling_params
             if sampling_params.std_output_tokens:
                 if sampling_params.std_output_tokens_next_idx == len(sampling_params.std_output_tokens):

@@ -29,7 +29,10 @@ parser.add_argument('--policy', '-p', type=str, choices=['mwf', 'lru', 'lfu'], d
 args = parser.parse_args()
 
 output_file_name = f"LEval_simulator_{args.policy}_qps{args.qps}_div{args.div}_h{args.half_life}.jsonl"
-df = pd.read_csv(f'./leval_data/outputs_q{args.qps}_d{args.div}.csv')
+input_file_name = f'./leval_data/outputs_q{args.qps}_d{args.div}.csv'
+# output_file_name='./test_trace_output.jsonl' # for testing
+# input_file_name = './leval_data/test_trace.csv'  # for testing
+df = pd.read_csv(input_file_name)
 
 # model = "meta-llama/Meta-Llama-3.1-8B-Instruct"
 model = "LargeWorldModel/LWM-Text-1M"

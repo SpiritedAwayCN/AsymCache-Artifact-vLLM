@@ -44,7 +44,8 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python \
     --dtype float16 \
     --enable-prefix-caching \
     --enable-chunked-prefill \
-    --max-model-len 130000 \
+    --max-model-len 524288 \
+    --max_num_batched_tokens 8192 \
     --gpu-memory-utilization 0.8 &
     # --collect_detailed_traces all \
 

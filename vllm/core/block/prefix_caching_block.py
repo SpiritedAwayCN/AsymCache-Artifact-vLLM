@@ -1205,8 +1205,10 @@ class ComputedBlocksTracker:
             seg1, seg2, seg3 = idxes[0] - start_idx, idxes[2] - idxes[1], idxes[4] - idxes[3]
             useg1, useg2 = max(0, idxes[1] - idxes[0]), max(0, idxes[3] - idxes[2])
             
+            logger.debug(f"seq_id {seq.seq_id} has suffix_computed_block_locs {seq.suffix_computed_block_locs}, start_idx {start_idx}, end_idx {end_idx}, seg1 {seg1}, seg2 {seg2}, seg3 {seg3}")
+            
+            
             if num_uncached is None or num_uncached >= useg1 + useg2:
-                logger.debug(f"seq_id {seq.seq_id} has suffix_computed_block_locs {seq.suffix_computed_block_locs}, start_idx {start_idx}, end_idx {end_idx}, seg1 {seg1}, seg2 {seg2}, seg3 {seg3}")
                 return seg1 + seg2 + seg3
             if num_uncached >= useg1:
                 return seg1 + seg2
