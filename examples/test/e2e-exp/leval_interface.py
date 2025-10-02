@@ -87,7 +87,7 @@ async def fetch(prompt, answer, output_file):
     async with aiohttp.ClientSession(timeout=AIOHTTP_TIMEOUT) as session:
         payload = {
             "model": model,
-            "prompt": prompt[:15000],
+            "prompt": prompt,
             "std_output_tokens": answer,
             "max_tokens": 8192,
         }

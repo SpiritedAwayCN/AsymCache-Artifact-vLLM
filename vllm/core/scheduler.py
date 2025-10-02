@@ -2255,6 +2255,7 @@ class Scheduler:
             # For a fully cached hit sequence, we actually need to recompute the
             # last token. So we need at least 1 uncached token to schedule.
             # See ModelRunner._compute_for_prefix_cache_hit for more details.
+            logger.warning(f"Request {seq_group.request_id} is a full cache hit. Will still recompute the last token.")
             num_uncached_new_tokens = 1
             num_cached_new_tokens -= 1
 
@@ -2273,6 +2274,14 @@ class Scheduler:
                 self.partial_prefill_budget_lookup_list,
                 partial_prefill_metadata,
             )
+            
+            # recompute the number of cached new tokens based on the num_uncached_new_tokens
+            if seq_group.first_seq.is_prefill() and seq_group.first_seq.suffix_computed_block_locs[0] > 0:
+                # if the seq has suffix computed blocks, we need to recompute num_cached_new_tokens
+                num_cached_new_tokens = self.block_manager.get_num_cached_tokens(
+                    seq_group.first_seq,
+                    start_idx=seq_group.first_seq.get_num_computed_tokens(),
+                    num_uncached=num_uncached_new_tokens,)
 
         # logger.info(f"Request {seq_group.request_id} has {num_uncached_new_tokens} uncached new tokens and {num_cached_new_tokens} cached new tokens.")
         return num_uncached_new_tokens, num_cached_new_tokens

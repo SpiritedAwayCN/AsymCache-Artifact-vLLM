@@ -1145,7 +1145,8 @@ class ComputedBlocksTracker:
 
         self._seq_id_to_blocks_hashes[seq.seq_id] = block_hashes_recorded
 
-    def get_num_cached_tokens(self, seq: Sequence, firstseg_only: bool = False, start_idx: int = 0, end_idx: int = -1) -> int:
+    def get_num_cached_tokens(self, seq: Sequence, firstseg_only: bool = False, start_idx: int = 0, end_idx: int = -1,
+                              num_uncached: Optional[int] = None) -> int:
         if not self._enable_caching:
             return 0
 
@@ -1154,11 +1155,12 @@ class ComputedBlocksTracker:
         # 2. generate seq.suffix_computed_block_locs here if not exist, not when allocating the sequence
         # 3. if seq.suffix_computed_block_locs exists, use it to truncate and compute num_cached_tokens directly
         
-        # We always try to update the sequence hashes on the fly.
-        # This is to ensure that we don't miss any cached tokens for the
-        # sequence during decode.
-        # This routine should only update hash for any new blocks too.
-        self._update_seq_hashes(seq)
+        if num_uncached is None:
+            # We always try to update the sequence hashes on the fly.
+            # This is to ensure that we don't miss any cached tokens for the
+            # sequence during decode.
+            # This routine should only update hash for any new blocks too.
+            self._update_seq_hashes(seq)
 
         # NOTE (chunan): this field should store the number of cached tokens in the first seg
         num_computed_tokens_prev = self._seq_id_to_num_tokens_computed.get(
@@ -1189,17 +1191,24 @@ class ComputedBlocksTracker:
             if firstseg_only:
                 return self._seq_id_to_num_tokens_computed[seq.seq_id]
             
-            start_idx *= self._block_size
             if end_idx == -1:
-                end_idx = len(block_hashes) + self._block_size
-            else:
-                end_idx *= self._block_size
-
-            seg1 = max(0, self._seq_id_to_num_tokens_computed[seq.seq_id] - start_idx)
-            seg2 = max(0, min(end_idx, seq.suffix_computed_block_locs[1]) - max(start_idx, seq.suffix_computed_block_locs[0]))
-            seg3 = max(0, min(end_idx, seq.suffix_computed_block_locs[3]) - max(start_idx, seq.suffix_computed_block_locs[2]))
-            logger.debug(f"seq_id {seq.seq_id} has suffix_computed_block_locs {seq.suffix_computed_block_locs}, start_idx {start_idx}, end_idx {end_idx}, seg1 {seg1}, seg2 {seg2}, seg3 {seg3}")
-            return seg1 + seg2 + seg3
+                end_idx = len(block_hashes) * self._block_size + self._block_size
+            
+            clamp = lambda x: max(start_idx, min(end_idx, x))
+            idxes = list(map(clamp, [self._seq_id_to_num_tokens_computed[seq.seq_id]] + seq.suffix_computed_block_locs))
+            
+            # seg1 = clamp(self._seq_id_to_num_tokens_computed[seq.seq_id]) - start_idx
+            # seg2 = clamp(seq.suffix_computed_block_locs[1]) - clamp(seq.suffix_computed_block_locs[0])
+            # seg3 = clamp(seq.suffix_computed_block_locs[3]) - clamp(seq.suffix_computed_block_locs[2])
+            seg1, seg2, seg3 = idxes[0] - start_idx, idxes[2] - idxes[1], idxes[4] - idxes[3]
+            useg1, useg2 = max(0, idxes[1] - idxes[0]), max(0, idxes[3] - idxes[2])
+            
+            if num_uncached is None or num_uncached >= useg1 + useg2:
+                logger.debug(f"seq_id {seq.seq_id} has suffix_computed_block_locs {seq.suffix_computed_block_locs}, start_idx {start_idx}, end_idx {end_idx}, seg1 {seg1}, seg2 {seg2}, seg3 {seg3}")
+                return seg1 + seg2 + seg3
+            if num_uncached >= useg1:
+                return seg1 + seg2
+            return seg1
 
         # This is O(logN), where N is the number of blocks.
         num_cached_blocks = len(
