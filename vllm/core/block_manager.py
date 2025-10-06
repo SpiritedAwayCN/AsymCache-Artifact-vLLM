@@ -177,9 +177,10 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
             segment_status = 0
             first_compute_start = -1
             seq.suffix_computed_block_locs = [0, 0, 0, 0, 0]
+            gpu_allocator = self.block_allocator._allocators[Device.GPU]
             
             for logical_idx, block in enumerate(block_table._blocks._blocks):
-                if block.computed:
+                if gpu_allocator._block_tracker[block.block_id].computed:
                     if segment_status == 1:
                         # multiple of 64
                         segment_status += 1
@@ -205,23 +206,23 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
             if first_compute_start == -1:
                 first_compute_start = logical_idx
             
-            if isinstance(self.block_allocator._allocators[Device.GPU], PrefixCachingBlockAllocator):
+            if isinstance(gpu_allocator, PrefixCachingBlockAllocator):
                 # rewrite the total_count and last_accessed of the uncached blocks to be the same as the subsequent cached blocks
                 if seq.suffix_computed_block_locs[0] > 0:
                     blk = block_table._blocks._blocks[seq.suffix_computed_block_locs[0] - 1]
-                    blk = self.block_allocator._allocators[Device.GPU]._block_tracker[blk.block_id]
+                    blk = gpu_allocator._block_tracker[blk.block_id]
                     
                     for block in block_table._blocks._blocks[first_compute_start:seq.suffix_computed_block_locs[0]]:
-                        tgt_blk = self.block_allocator._allocators[Device.GPU]._block_tracker[block.block_id]
+                        tgt_blk = gpu_allocator._block_tracker[block.block_id]
                         tgt_blk.total_count = blk.total_count
                         tgt_blk.last_accessed = blk.last_accessed
                 
                 if seq.suffix_computed_block_locs[2] > 0:
                     blk = block_table._blocks._blocks[seq.suffix_computed_block_locs[2] - 1]
-                    blk = self.block_allocator._allocators[Device.GPU]._block_tracker[blk.block_id]
+                    blk = gpu_allocator._block_tracker[blk.block_id]
                     
                     for block in block_table._blocks._blocks[seq.suffix_computed_block_locs[1]:seq.suffix_computed_block_locs[2]]:
-                        tgt_blk = self.block_allocator._allocators[Device.GPU]._block_tracker[block.block_id]
+                        tgt_blk = gpu_allocator._block_tracker[block.block_id]
                         tgt_blk.total_count = blk.total_count
                         tgt_blk.last_accessed = blk.last_accessed
 
