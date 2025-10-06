@@ -13,6 +13,7 @@ export VLLM_SCHEDULE_ONE_PREFILL=1
 export HALF_LIFE=5000
 export VLLM_EVICTOR_POLICY=mwf
 export VLLM_LOGGING_LEVEL=DEBUG
+# export CUDA_LAUNCH_BLOCKING=1
 export HF_ENDPOINT=https://hf-mirror.com
 export NCCL_ALGO=Ring
 export CSET_DIR='../../../csrc/c_set/'
@@ -48,6 +49,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python \
     --max_num_batched_tokens 8192 \
     --gpu-memory-utilization 0.8 &
     # --collect_detailed_traces all \
+    # --enforce-eager \
 
 # decoding instance, which is the KV consumer
 # VLLM_DISTRIBUTED_KV_ROLE=consumer CUDA_VISIBLE_DEVICES=2 python \

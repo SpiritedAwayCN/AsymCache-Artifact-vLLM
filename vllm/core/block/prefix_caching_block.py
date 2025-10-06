@@ -739,7 +739,7 @@ class PrefixCachingBlockAllocator(BlockAllocator):
             return self.block_is_computed(cached_block_id)
         
         first_compute_start = len(block_hashes) * self._block_size
-        suffix_computed_block_locs = [0, 0, 0, 0]
+        suffix_computed_block_locs = [0, 0, 0, 0, 0]
         
         segment_status = 0
         
@@ -770,6 +770,7 @@ class PrefixCachingBlockAllocator(BlockAllocator):
         if first_compute_start == -1:
             first_compute_start = logical_idx * self._block_size
         
+        suffix_computed_block_locs[4] = first_compute_start
         # logger.info(f"find_cached_blocks_multiseg: first_compute_start={first_compute_start}, suffix_computed_block_locs={suffix_computed_block_locs}")
         
         return first_compute_start, suffix_computed_block_locs
@@ -1170,14 +1171,15 @@ class ComputedBlocksTracker:
 
         # TODO(rickyx): This hack could be removed once we mark blocks as
         # computed correctly with chunked prefills.
-        if num_computed_tokens_prev is not None and seq.is_prefill() and firstseg_only:
+        # if num_computed_tokens_prev is not None and seq.is_prefill() and not firstseg_only:
             # For a sequence that is still in prefill, we don't
             # recompute the number of cached tokens.
             # This also handles correctly chunked prefill since currently
             # we mark blocks as computed even if the sequence is still partially
             # prefilled. So a continuously prefilled sequence should not
             # see its cached token count change while running.
-            return num_computed_tokens_prev
+            # logger.debug(f"seq_id {seq.seq_id} is in prefill, returning previous num_computed_tokens {num_computed_tokens_prev}")
+            # return num_computed_tokens_prev
 
         block_hashes = self._seq_id_to_blocks_hashes[seq.seq_id]
         # logger.info("seq_id %d has suffix_computed_block_locs %s",
@@ -1188,29 +1190,29 @@ class ComputedBlocksTracker:
                 # If the sequence does not have suffix_computed_block_locs,
                 # we generate it here.
                 self._seq_id_to_num_tokens_computed[seq.seq_id], seq.suffix_computed_block_locs = self._allocator.find_cached_blocks_multiseg(block_hashes)
-                logger.info(f"seq_id {seq.seq_id} has suffix_computed_block_locs {seq.suffix_computed_block_locs}, first_compute_start {self._seq_id_to_num_tokens_computed[seq.seq_id]}")
+                logger.debug(f"seq_id {seq.seq_id} has suffix_computed_block_locs {seq.suffix_computed_block_locs}, first_compute_start {self._seq_id_to_num_tokens_computed[seq.seq_id]}")
             
             if firstseg_only:
-                return self._seq_id_to_num_tokens_computed[seq.seq_id]
+                return seq.suffix_computed_block_locs[4]
             
             if end_idx == -1:
                 end_idx = len(block_hashes) * self._block_size + self._block_size
             
             clamp = lambda x: max(start_idx, min(end_idx, x))
-            idxes = list(map(clamp, [self._seq_id_to_num_tokens_computed[seq.seq_id]] + seq.suffix_computed_block_locs))
+            idxes = list(map(clamp, seq.suffix_computed_block_locs))
             
             # seg1 = clamp(self._seq_id_to_num_tokens_computed[seq.seq_id]) - start_idx
             # seg2 = clamp(seq.suffix_computed_block_locs[1]) - clamp(seq.suffix_computed_block_locs[0])
             # seg3 = clamp(seq.suffix_computed_block_locs[3]) - clamp(seq.suffix_computed_block_locs[2])
-            seg1, seg2, seg3 = idxes[0] - start_idx, idxes[2] - idxes[1], idxes[4] - idxes[3]
-            useg1, useg2 = max(0, idxes[1] - idxes[0]), max(0, idxes[3] - idxes[2])
-            
-            logger.debug(f"seq_id {seq.seq_id} has suffix_computed_block_locs {seq.suffix_computed_block_locs}, start_idx {start_idx}, end_idx {end_idx}, seg1 {seg1}, seg2 {seg2}, seg3 {seg3}")
-            
-            
-            if num_uncached is None or num_uncached >= useg1 + useg2:
+            seg1, seg2, seg3 = idxes[4] - start_idx, idxes[1] - idxes[0], idxes[3] - idxes[2]
+            useg1, useg2 = max(0, idxes[0] - idxes[4]), max(0, idxes[2] - idxes[1])
+
+            logger.debug(f"seq_id {seq.seq_id} has suffix_computed_block_locs {seq.suffix_computed_block_locs}, start_idx {start_idx}, "
+                         f"end_idx {end_idx}, seg1 {seg1}, useg1 {useg1}, seg2 {seg2}, useg2 {useg2}, seg3 {seg3}, num_uncached {num_uncached}")
+            # if it is exactly the uncache/cache boundary, dont include the last cached seg.
+            if num_uncached is None or num_uncached > useg1 + useg2:
                 return seg1 + seg2 + seg3
-            if num_uncached >= useg1:
+            if num_uncached > useg1:
                 return seg1 + seg2
             return seg1
 

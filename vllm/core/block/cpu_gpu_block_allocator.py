@@ -81,18 +81,6 @@ class CpuGpuBlockAllocator(DeviceAwareBlockAllocator):
                 block_ids=cpu_block_ids,
             )
         elif allocator_type == "prefix_caching":
-            evictor_policy_env = os.environ.get("VLLM_EVICTOR_POLICY", "lru")
-            
-            if evictor_policy_env == "lru":
-                evictor_policy = EvictionPolicy.LRU
-            elif evictor_policy_env == "mwf":
-                evictor_policy = EvictionPolicy.MWF
-            elif evictor_policy_env == "lfu":
-                evictor_policy = EvictionPolicy.LFU
-            else:
-                raise ValueError(f"Unknown evictor policy {evictor_policy_env=}")
-            
-            
             gpu_allocator = PrefixCachingBlockAllocator(
                 num_blocks=num_gpu_blocks,
                 block_size=block_size,

@@ -497,7 +497,7 @@ class Sequence:
         self.slo_urgent = slo_urgent
         self.slo_dict = slo_dict
         self.user_id = user_id
-        self.suffix_computed_block_locs : List[int] = [0, 0, 0, 0]
+        self.suffix_computed_block_locs : List[int] = [0, 0, 0, 0, 0]
 
         self.data = SequenceData.from_seqs(
             self.prompt_token_ids,
@@ -965,6 +965,8 @@ class SequenceGroup:
                 locs = seq.suffix_computed_block_locs
                 new = num_new_computed_tokens
                 first = seq.get_num_computed_tokens()
+                if first > locs[-1]:
+                    locs[-1] = first
                 # print(f"num_new_computed_tokens={num_new_computed_tokens}, first={first}, locs={locs}")
                 while locs[0] != 0 and first >= locs[0]:
                     # first seg was computed.

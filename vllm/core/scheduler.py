@@ -13,6 +13,7 @@ from typing import Set, Tuple, Union
 
 from vllm.config import CacheConfig, LoRAConfig, SchedulerConfig
 from vllm.core.interfaces import AllocStatus, BlockSpaceManager
+from vllm.core.evictor import EvictionPolicy
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
 from vllm.prompt_adapter.request import PromptAdapterRequest
@@ -31,7 +32,7 @@ def detailed_info(self, message, *args, **kwargs):
         self._log(DETAILED_INFO, message, args, **kwargs)
 
 logging.Logger.detailed_info = detailed_info
-logger.setLevel(logging.INFO)
+# logger.setLevel(logging.DEBUG)
 
 file_handler = logging.FileHandler('schedule_detail.log')
 file_handler.setLevel(DETAILED_INFO)
@@ -531,6 +532,16 @@ class Scheduler:
         num_cpu_blocks = cache_config.num_cpu_blocks
         if num_cpu_blocks:
             num_cpu_blocks //= pipeline_parallel_size
+        
+        evictor_policy_env = os.environ.get("VLLM_EVICTOR_POLICY", "lru")
+        if evictor_policy_env == "lru":
+            evictor_policy = EvictionPolicy.LRU
+        elif evictor_policy_env == "mwf":
+            evictor_policy = EvictionPolicy.MWF
+        elif evictor_policy_env == "lfu":
+            evictor_policy = EvictionPolicy.LFU
+        else:
+            raise ValueError(f"Unknown evictor policy {evictor_policy_env=}")
 
         # Create the block space manager.
         self.block_manager = BlockSpaceManagerImpl(
@@ -539,6 +550,7 @@ class Scheduler:
             num_cpu_blocks=num_cpu_blocks,
             sliding_window=self.cache_config.sliding_window,
             enable_caching=self.cache_config.enable_prefix_caching,
+            eviction_policy=evictor_policy,
         )
 
         # Sequence groups in the WAITING state.
@@ -789,7 +801,7 @@ class Scheduler:
             #   2. If a sequence is running with non-chunked prefill, then
             #      there it's a decoding sequence, and the cached tokens info is
             #      irrelevant.
-            num_uncached_new_tokens, _ = \
+            num_uncached_new_tokens, num_cached_new_tokens = \
                 self._get_num_new_uncached_and_cached_tokens(
                 seq_group,
                 SequenceStatus.RUNNING,
@@ -797,6 +809,8 @@ class Scheduler:
                 budget,
                 partial_prefill_metadata,
             )
+            # modified for multi-seg, num_cached_new_tokens might be non-zero
+            num_new_tokens = num_uncached_new_tokens + num_cached_new_tokens
 
             num_running_tokens = num_uncached_new_tokens
             if num_running_tokens == 0:
@@ -877,7 +891,7 @@ class Scheduler:
                         self.cache_id].get_object())
                 scheduled_seq_group.seq_group = seq_group
                 if is_prefill:
-                    scheduled_seq_group.token_chunk_size = num_running_tokens
+                    scheduled_seq_group.token_chunk_size = num_new_tokens # originally num_running_tokens
                     prefill_seq_groups.append(scheduled_seq_group)
                     ret.prefill_seq_groups_list.append(seq_group)
                 else:
@@ -1818,14 +1832,14 @@ class Scheduler:
                 common_computed_block_nums = (
                     self.block_manager.get_common_computed_block_ids(
                         seq_group.get_seqs(status=SequenceStatus.RUNNING), firstseg_only=True))
-                logger.debug(f'common_computed_block_nums: {common_computed_block_nums}.')
+                # logger.debug(f'common_computed_block_nums: {common_computed_block_nums}.')
 
             do_sample = True
             is_prompt = seq_group.is_prefill()
             # We should send the metadata to workers when the first prefill
             # is sent. Subsequent requests could be chunked prefill or decode.
             is_first_prefill = False
-            suffix_computed_block_locs = [0, 0, 0, 0]
+            suffix_computed_block_locs = [0, 0, 0, 0, 0]
             if is_prompt:
                 seqs = seq_group.get_seqs()
                 # Prefill has only 1 sequence.

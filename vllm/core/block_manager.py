@@ -176,6 +176,7 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
             # Modified by SpiritedAwayCN
             segment_status = 0
             first_compute_start = -1
+            seq.suffix_computed_block_locs = [0, 0, 0, 0, 0]
             
             for logical_idx, block in enumerate(block_table._blocks._blocks):
                 if block.computed:
@@ -199,35 +200,38 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
             # TODO: move `total_count` to refcounter
             if segment_status == 2:
                 seq.suffix_computed_block_locs[1] = logical_idx
-            elif seq.suffix_computed_block_locs[0] > 0 and isinstance(self.block_allocator._allocators[Device.GPU], PrefixCachingBlockAllocator):
-                blk = block_table._blocks._blocks[seq.suffix_computed_block_locs[1]]
-                blk = self.block_allocator._allocators[Device.GPU]._block_tracker[blk.block_id]
-                
-                for block in block_table._blocks._blocks[seq.suffix_computed_block_locs[0]:seq.suffix_computed_block_locs[1]]:
-                    tgt_blk = self.block_allocator._allocators[Device.GPU]._block_tracker[block.block_id]
-                    tgt_blk.total_count = blk.total_count
-                    tgt_blk.last_accessed = blk.last_accessed
-            
             if segment_status == 4:
                 seq.suffix_computed_block_locs[3] = logical_idx
-            elif seq.suffix_computed_block_locs[2] > 0:
-                blk = block_table._blocks._blocks[seq.suffix_computed_block_locs[3]]
-                blk = self.block_allocator._allocators[Device.GPU]._block_tracker[blk.block_id]
-                
-                for block in block_table._blocks._blocks[seq.suffix_computed_block_locs[2]:seq.suffix_computed_block_locs[3]]:
-                    tgt_blk = self.block_allocator._allocators[Device.GPU]._block_tracker[block.block_id]
-                    tgt_blk.total_count = blk.total_count
-                    tgt_blk.last_accessed = blk.last_accessed
-            
             if first_compute_start == -1:
                 first_compute_start = logical_idx
+            
+            if isinstance(self.block_allocator._allocators[Device.GPU], PrefixCachingBlockAllocator):
+                # rewrite the total_count and last_accessed of the uncached blocks to be the same as the subsequent cached blocks
+                if seq.suffix_computed_block_locs[0] > 0:
+                    blk = block_table._blocks._blocks[seq.suffix_computed_block_locs[0] - 1]
+                    blk = self.block_allocator._allocators[Device.GPU]._block_tracker[blk.block_id]
+                    
+                    for block in block_table._blocks._blocks[first_compute_start:seq.suffix_computed_block_locs[0]]:
+                        tgt_blk = self.block_allocator._allocators[Device.GPU]._block_tracker[block.block_id]
+                        tgt_blk.total_count = blk.total_count
+                        tgt_blk.last_accessed = blk.last_accessed
                 
+                if seq.suffix_computed_block_locs[2] > 0:
+                    blk = block_table._blocks._blocks[seq.suffix_computed_block_locs[2] - 1]
+                    blk = self.block_allocator._allocators[Device.GPU]._block_tracker[blk.block_id]
+                    
+                    for block in block_table._blocks._blocks[seq.suffix_computed_block_locs[1]:seq.suffix_computed_block_locs[2]]:
+                        tgt_blk = self.block_allocator._allocators[Device.GPU]._block_tracker[block.block_id]
+                        tgt_blk.total_count = blk.total_count
+                        tgt_blk.last_accessed = blk.last_accessed
+
             seq.suffix_computed_block_locs[0] *= self.block_size
             seq.suffix_computed_block_locs[1] *= self.block_size
             seq.suffix_computed_block_locs[2] *= self.block_size
             seq.suffix_computed_block_locs[3] *= self.block_size
+            seq.suffix_computed_block_locs[4] = first_compute_start * self.block_size
             
-            logger.debug(f"seq: {seq}, "
+            logger.info(f"seq: {seq}, "
                          f"suffix_computed_block_locs: {seq.suffix_computed_block_locs}, "
                          f"first_compute_start: {first_compute_start * self.block_size}")
 
