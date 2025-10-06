@@ -627,7 +627,7 @@ class FlashAttentionMetadataBuilder(
                 else:
                     query_lens_3.append(0)
                     seq_used_k_2.append(0)
-                cache_2seg = True # if inter_data.suffix_computed_block_locs[1] > 0 else cache_2seg
+                cache_2seg = True if (inter_data.seq_lens[0] > inter_data.suffix_computed_block_locs[0] > 0) else cache_2seg
                 # print(f"suffix_computed_block_locs: {inter_data.suffix_computed_block_locs}, val: {val}", flush=True)
 
         device = self.runner.device
@@ -700,22 +700,29 @@ class FlashAttentionMetadataBuilder(
                 num = (inter_data.query_lens[0] - 1) // kBlockM + 1
                 blocks_sum += num
                 blocks_in_batch.append(blocks_sum)
-                if len(query_lens_2) > 0:
-                    for _ in range(num):
-                        if loc < query_lens_2[i]:
-                            seqlens_q_block.append(query_lens_2[i])
-                            seqused_k_block.append(seq_used_k[i])
-                        elif loc < query_lens_2[i] + query_lens_3[i]:
-                            seqlens_q_block.append(query_lens_2[i] + query_lens_3[i])
-                            seqused_k_block.append(seq_used_k_2[i])
-                        else:
-                            seqlens_q_block.append(inter_data.query_lens[0])
-                            seqused_k_block.append(seq_lens[i])
-                        loc += kBlockM
+                if (inter_data.suffix_computed_block_locs is not None and 
+                        inter_data.seq_lens[0] > inter_data.suffix_computed_block_locs[0] > 0):
+                    seg1, seg2 = query_lens_2[i] // kBlockM, query_lens_3[i] // kBlockM
+                    seg3 = max(0, num - seg1 - seg2)
+                    seqlens_q_block.extend([query_lens_2[i]] * seg1 + [query_lens_2[i] + query_lens_3[i]] * seg2 + [inter_data.query_lens[0]] * seg3)
+                    seqused_k_block.extend([seq_used_k[i]] * seg1 + [seq_used_k_2[i]] * seg2 + [seq_lens[i]] * seg3)
+                    # for _ in range(num):
+                    #     if loc < query_lens_2[i]:
+                    #         seqlens_q_block.append(query_lens_2[i])
+                    #         seqused_k_block.append(seq_used_k[i])
+                    #     elif loc < query_lens_2[i] + query_lens_3[i]:
+                    #         seqlens_q_block.append(query_lens_2[i] + query_lens_3[i])
+                    #         seqused_k_block.append(seq_used_k_2[i])
+                    #     else:
+                    #         seqlens_q_block.append(inter_data.query_lens[0])
+                    #         seqused_k_block.append(seq_lens[i])
+                    #     loc += kBlockM
                 else:
-                    for _ in range(num):
-                        seqlens_q_block.append(inter_data.query_lens[0])
-                        seqused_k_block.append(seq_lens[i])
+                    seqlens_q_block.extend([inter_data.query_lens[0]] * num)
+                    seqused_k_block.extend([seq_lens[i]] * num)
+                    # for _ in range(num):
+                    #     seqlens_q_block.append(inter_data.query_lens[0])
+                    #     seqused_k_block.append(seq_lens[i])
             seqlens_q_block = async_tensor_h2d(seqlens_q_block, torch.int, device, self.runner.pin_memory)
             seqused_k_block = async_tensor_h2d(seqused_k_block, torch.int, device, self.runner.pin_memory)
             blocks_in_batch = async_tensor_h2d(blocks_in_batch, torch.int, device, self.runner.pin_memory)
@@ -789,8 +796,8 @@ class FlashAttentionMetadataBuilder(
             seqused_k_block=seqused_k_block,
             blocks_in_batch=blocks_in_batch,
         )
-        # if self.num_prefills > 1:
-        #     logger.debug(f"FlashAttentionMetadata (not 2seg): {ret}")
+        if num_decode_tokens > 50:
+            logger.debug(f"FlashAttentionMetadata (not 2seg): {ret}")
         return ret
 
 
