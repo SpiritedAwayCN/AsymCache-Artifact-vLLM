@@ -13,6 +13,7 @@ from typing import Set, Tuple, Union
 
 from vllm.config import CacheConfig, LoRAConfig, SchedulerConfig
 from vllm.core.interfaces import AllocStatus, BlockSpaceManager
+from vllm.core.evictor import EvictionPolicy
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
 from vllm.prompt_adapter.request import PromptAdapterRequest
@@ -31,7 +32,7 @@ def detailed_info(self, message, *args, **kwargs):
         self._log(DETAILED_INFO, message, args, **kwargs)
 
 logging.Logger.detailed_info = detailed_info
-logger.setLevel(logging.INFO)
+# logger.setLevel(logging.DEBUG)
 
 file_handler = logging.FileHandler('schedule_detail.log')
 file_handler.setLevel(DETAILED_INFO)
@@ -531,6 +532,16 @@ class Scheduler:
         num_cpu_blocks = cache_config.num_cpu_blocks
         if num_cpu_blocks:
             num_cpu_blocks //= pipeline_parallel_size
+        
+        evictor_policy_env = os.environ.get("VLLM_EVICTOR_POLICY", "lru")
+        if evictor_policy_env == "lru":
+            evictor_policy = EvictionPolicy.LRU
+        elif evictor_policy_env == "mwf":
+            evictor_policy = EvictionPolicy.MWF
+        elif evictor_policy_env == "lfu":
+            evictor_policy = EvictionPolicy.LFU
+        else:
+            raise ValueError(f"Unknown evictor policy {evictor_policy_env=}")
 
         # Create the block space manager.
         self.block_manager = BlockSpaceManagerImpl(
@@ -539,6 +550,7 @@ class Scheduler:
             num_cpu_blocks=num_cpu_blocks,
             sliding_window=self.cache_config.sliding_window,
             enable_caching=self.cache_config.enable_prefix_caching,
+            eviction_policy=evictor_policy,
         )
 
         # Sequence groups in the WAITING state.
@@ -789,7 +801,7 @@ class Scheduler:
             #   2. If a sequence is running with non-chunked prefill, then
             #      there it's a decoding sequence, and the cached tokens info is
             #      irrelevant.
-            num_uncached_new_tokens, _ = \
+            num_uncached_new_tokens, num_cached_new_tokens = \
                 self._get_num_new_uncached_and_cached_tokens(
                 seq_group,
                 SequenceStatus.RUNNING,
@@ -797,6 +809,8 @@ class Scheduler:
                 budget,
                 partial_prefill_metadata,
             )
+            # modified for multi-seg, num_cached_new_tokens might be non-zero
+            num_new_tokens = num_uncached_new_tokens + num_cached_new_tokens
 
             num_running_tokens = num_uncached_new_tokens
             if num_running_tokens == 0:
@@ -877,7 +891,7 @@ class Scheduler:
                         self.cache_id].get_object())
                 scheduled_seq_group.seq_group = seq_group
                 if is_prefill:
-                    scheduled_seq_group.token_chunk_size = num_running_tokens
+                    scheduled_seq_group.token_chunk_size = num_new_tokens # originally num_running_tokens
                     prefill_seq_groups.append(scheduled_seq_group)
                     ret.prefill_seq_groups_list.append(seq_group)
                 else:
@@ -1123,7 +1137,8 @@ class Scheduler:
         curr_loras: Optional[Set[int]],
         enable_chunking: bool = False,
         partial_prefill_metadata: Optional[PartialPrefillMetadata] = None,
-        schedule_one=False,
+        max_schedule_prefills: int = -1,
+        schedule_one: bool = False,
     ) -> SchedulerPrefillOutputs:
         """Schedule sequence groups that are in prefill stage.
 
@@ -1168,6 +1183,10 @@ class Scheduler:
         leftover_waiting_sequences: Deque[SequenceGroup] = deque()
 
         blocks_to_offload: List[Tuple[int, int, bool]] = []
+
+        count = 0
+        if schedule_one:
+            max_schedule_prefills = 1
         while self._passed_delay(time.time()) and waiting_queue:
             seq_group = waiting_queue[0]
 
@@ -1307,8 +1326,8 @@ class Scheduler:
             )
             budget.add_num_seqs(seq_group.request_id, num_new_seqs)
 
-            if schedule_one:
-                # print("@@schedule one prefill")
+            count += 1
+            if max_schedule_prefills != -1 and count == max_schedule_prefills:
                 break
 
         # Queue requests that couldn't be scheduled.
@@ -1364,7 +1383,7 @@ class Scheduler:
             budget,
             curr_loras,
             enable_chunking=False,
-            schedule_one=True,
+            max_schedule_prefills=4,
         )
         # print(f"prefill:{len(prefills.seq_groups)}")
         assert (budget.num_batched_tokens
@@ -1813,14 +1832,14 @@ class Scheduler:
                 common_computed_block_nums = (
                     self.block_manager.get_common_computed_block_ids(
                         seq_group.get_seqs(status=SequenceStatus.RUNNING), firstseg_only=True))
-                logger.debug(f'common_computed_block_nums: {common_computed_block_nums}.')
+                # logger.debug(f'common_computed_block_nums: {common_computed_block_nums}.')
 
             do_sample = True
             is_prompt = seq_group.is_prefill()
             # We should send the metadata to workers when the first prefill
             # is sent. Subsequent requests could be chunked prefill or decode.
             is_first_prefill = False
-            suffix_computed_block_locs = [0, 0, 0, 0]
+            suffix_computed_block_locs = [0, 0, 0, 0, 0]
             if is_prompt:
                 seqs = seq_group.get_seqs()
                 # Prefill has only 1 sequence.
@@ -2222,29 +2241,29 @@ class Scheduler:
             # evictor meaning that it's not yet allocated. However, we don't
             # exclude such tokens in the cache count because it will be
             # guaranteed to be allocated later if the sequence can be allocated.
-            num_cached_tokens_seq = self.block_manager.get_num_cached_tokens(
-                seq)
+            num_cached_new_tokens_seq = self.block_manager.get_num_cached_tokens(
+                seq, start_idx=num_computed_tokens_seq)
 
             # Sanity check.
-            if num_cached_tokens_seq < num_computed_tokens_seq:
-                # This should only happen with chunked prefill, and
-                # the seq is still in prefill. The `num_cached_tokens_seq`
-                # is the value we calculated on scheduling the first prefill.
-                # For subsequent continuous prefill steps, we cached the
-                # number of cache tokens for the sequence so the cached token
-                # count could be less than the number of computed tokens.
-                # See comments on `ComputedBlocksTracker` for more details.
-                assert (
-                    seq.is_prefill() and seq.status == SequenceStatus.RUNNING
-                    and self.scheduler_config.chunked_prefill_enabled
-                ), ("Number of cached tokens should not be less than the "
-                    "number of computed tokens for a sequence that's still "
-                    f"in prefill. But there are {num_cached_tokens_seq} cached "
-                    f"tokens and {num_computed_tokens_seq} computed tokens "
-                    f"for sequence {seq.seq_id}.")
+            # if num_cached_tokens_seq < num_computed_tokens_seq:
+            #     # This should only happen with chunked prefill, and
+            #     # the seq is still in prefill. The `num_cached_tokens_seq`
+            #     # is the value we calculated on scheduling the first prefill.
+            #     # For subsequent continuous prefill steps, we cached the
+            #     # number of cache tokens for the sequence so the cached token
+            #     # count could be less than the number of computed tokens.
+            #     # See comments on `ComputedBlocksTracker` for more details.
+            #     assert (
+            #         seq.is_prefill() and seq.status == SequenceStatus.RUNNING
+            #         and self.scheduler_config.chunked_prefill_enabled
+            #     ), ("Number of cached tokens should not be less than the "
+            #         "number of computed tokens for a sequence that's still "
+            #         f"in prefill. But there are {num_cached_tokens_seq} cached "
+            #         f"tokens and {num_computed_tokens_seq} computed tokens "
+            #         f"for sequence {seq.seq_id}.")
 
-            num_cached_new_tokens_seq = max(
-                0, num_cached_tokens_seq - num_computed_tokens_seq)
+            # num_cached_new_tokens_seq = max(
+            #     0, num_cached_tokens_seq - num_computed_tokens_seq)
             num_uncached_new_tokens_seq = (all_num_new_tokens_seq -
                                            num_cached_new_tokens_seq)
 
@@ -2255,6 +2274,7 @@ class Scheduler:
             # For a fully cached hit sequence, we actually need to recompute the
             # last token. So we need at least 1 uncached token to schedule.
             # See ModelRunner._compute_for_prefix_cache_hit for more details.
+            logger.warning(f"Request {seq_group.request_id} is a full cache hit. Will still recompute the last token.")
             num_uncached_new_tokens = 1
             num_cached_new_tokens -= 1
 
@@ -2262,6 +2282,8 @@ class Scheduler:
             # Chunk if a running request cannot fit in the given budget.
             # If number of seq > 1, it means it is doing beam search
             # in a decode phase. Do not chunk.
+            
+            # TODO (chunan):
             num_uncached_new_tokens = self._chunk_new_tokens_to_schedule(
                 self.scheduler_config,
                 self.cache_config,
@@ -2271,7 +2293,16 @@ class Scheduler:
                 self.partial_prefill_budget_lookup_list,
                 partial_prefill_metadata,
             )
+            
+            # recompute the number of cached new tokens based on the num_uncached_new_tokens
+            if seq_group.first_seq.is_prefill() and seq_group.first_seq.suffix_computed_block_locs[0] > 0:
+                # if the seq has suffix computed blocks, we need to recompute num_cached_new_tokens
+                num_cached_new_tokens = self.block_manager.get_num_cached_tokens(
+                    seq_group.first_seq,
+                    start_idx=seq_group.first_seq.get_num_computed_tokens(),
+                    num_uncached=num_uncached_new_tokens,)
 
+        # logger.info(f"Request {seq_group.request_id} has {num_uncached_new_tokens} uncached new tokens and {num_cached_new_tokens} cached new tokens.")
         return num_uncached_new_tokens, num_cached_new_tokens
 
     @staticmethod
@@ -2338,7 +2369,11 @@ class Scheduler:
             # NB: In the case where num_new_tokens < budget, we are
             # finishing prefill for this sequence, so we do not need to
             # allocate a full block.
-
+        
+        logger.debug(f"num_new_tokens before chunking: {num_new_tokens}, "
+                    f"remaining_token_budget: {remaining_token_budget}, "
+                    f"prefill_slot_budget: {prefill_slot_budget}")
+        
         num_new_tokens = min(num_new_tokens, remaining_token_budget,
                              prefill_slot_budget)
 

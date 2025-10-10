@@ -133,6 +133,7 @@ class RequestMetrics:
     first_compute_start: Optional[int] = None
     spec_token_acceptance_counts: Optional[list[int]] = None
 
+    total_elapsed_time: Optional[float] = None
 
 class SequenceDataDelta(
         msgspec.Struct,
@@ -481,6 +482,8 @@ class Sequence:
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         from_decoder_prompt: bool = True,
         slo_urgent: float = 0.0,
+        slo_dict: Optional[Dict[str, float]] = None,
+        user_id: int = 0,
     ) -> None:
         self.seq_id = seq_id
         self.inputs = inputs
@@ -492,7 +495,9 @@ class Sequence:
         self._prompt: Optional[str] = None
         self._prompt_token_ids: Optional[List[int]] = None
         self.slo_urgent = slo_urgent
-        self.suffix_computed_block_locs : List[int] = [0, 0, 0, 0]
+        self.slo_dict = slo_dict
+        self.user_id = user_id
+        self.suffix_computed_block_locs : List[int] = [0, 0, 0, 0, 0]
 
         self.data = SequenceData.from_seqs(
             self.prompt_token_ids,
@@ -611,7 +616,7 @@ class Sequence:
         num_tokens = self.num_hashed_tokens_of_block(logical_idx)
         hashed_tokens = self.data.get_prefix_token_ids(num_tokens)
         return hash((hashed_tokens[0] + hashed_tokens[1] if hashed_tokens[1] else hashed_tokens[0],
-                    self.lora_int_id))
+                    self.lora_int_id, self.user_id))
         # return hash((hashed_tokens, self.lora_int_id))
 
     def extra_hash(self) -> Optional[int]:
@@ -625,7 +630,7 @@ class Sequence:
 
         # NOTE: If there are additional factors influencing the block aside from
         # token_ids, include them as input parameters to the hash.
-        return hash((self.prompt_adapter_id, self.lora_int_id))
+        return hash((self.prompt_adapter_id, self.lora_int_id, self.user_id))
 
     def num_hashed_tokens_of_block(self, logical_idx: int):
         return logical_idx * self.block_size + self.block_size
@@ -696,7 +701,9 @@ class Sequence:
         return (f"Sequence(seq_id={self.seq_id}, "
                 f"status={self.status.name}, "
                 f"num_blocks={self.n_blocks}, "
-                f"slo_urgent={self.slo_urgent}), ")
+                f"slo_urgent={self.slo_urgent}, "
+                f"slo_dict={self.slo_dict}, "
+                f"user_id={self.user_id})")
 
 
 class SequenceGroupState(msgspec.Struct,
@@ -898,9 +905,18 @@ class SequenceGroup:
             self.metrics.first_scheduled_time = time
             self.metrics.time_in_queue = time - self.metrics.arrival_time
 
+    def get_total_elapsed_time(self, time: Optional[float] = None) -> None:
+        if time:
+            return time - self.metrics.arrival_time
+        else:
+            import time
+            return time.time() - self.metrics.arrival_time
+
     def set_finished_time(self, time: Optional[float]) -> None:
         """Sets the finished time for Request level timings."""
         self.metrics.finished_time = time
+        if time is not None:
+            self.metrics.total_elapsed_time = time - self.metrics.arrival_time
     
     def set_suffix_computed_block_locs(self, suffix_computed_block_locs: Optional[List[int]]) -> None:
         self.metrics.suffix_computed_block_locs = suffix_computed_block_locs
@@ -949,13 +965,15 @@ class SequenceGroup:
                 locs = seq.suffix_computed_block_locs
                 new = num_new_computed_tokens
                 first = seq.get_num_computed_tokens()
+                if first > locs[-1]:
+                    locs[-1] = first
                 # print(f"num_new_computed_tokens={num_new_computed_tokens}, first={first}, locs={locs}")
                 while locs[0] != 0 and first >= locs[0]:
                     # first seg was computed.
                     locs[0], locs[1] = locs[2], locs[3]
                     locs[2], locs[3] = 0, 0
         # TODO(chunan): Update the self.suffix_computed_block_locs, using the first_seq
-        self.suffix_computed_block_locs = self.first_seq.suffix_computed_block_locs
+        # self.set_suffix_computed_block_locs(self.first_seq.suffix_computed_block_locs)
 
     def get_num_uncomputed_tokens(self) -> int:
         num_uncomputed_tokens = 0

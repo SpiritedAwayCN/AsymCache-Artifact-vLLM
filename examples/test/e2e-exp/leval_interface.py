@@ -15,9 +15,11 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
-BASE_DIR = '/home/pkuhetu/sca/dataset/LEval'
+BASE_DIR = '/jizhicfs/marvinhjia/sca/'
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
-API_URL = 'http://172.24.230.34:8047/v1/completions'
+# get ip equivalent to $(hostname -I | awk '{print $1}')
+vllm_host_ip = os.popen("hostname -I | awk '{print $1}'").read().strip()
+API_URL = f'http://{vllm_host_ip}:8048/v1/completions'
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--div', '-d', type=int, default=80)
@@ -27,7 +29,10 @@ parser.add_argument('--policy', '-p', type=str, choices=['mwf', 'lru', 'lfu'], d
 args = parser.parse_args()
 
 output_file_name = f"LEval_simulator_{args.policy}_qps{args.qps}_div{args.div}_h{args.half_life}.jsonl"
-df = pd.read_csv(f'./leval_data/outputs_q{args.qps}_d{args.div}.csv')
+input_file_name = f'./leval_data/outputs_q{args.qps}_d{args.div}.csv'
+# output_file_name='./test_trace_output.jsonl' # for testing
+# input_file_name = './leval_data/test_trace.csv'  # for testing
+df = pd.read_csv(input_file_name)
 
 # model = "meta-llama/Meta-Llama-3.1-8B-Instruct"
 model = "LargeWorldModel/LWM-Text-1M"
@@ -85,7 +90,7 @@ async def fetch(prompt, answer, output_file):
     async with aiohttp.ClientSession(timeout=AIOHTTP_TIMEOUT) as session:
         payload = {
             "model": model,
-            "prompt": prompt[:15000],
+            "prompt": prompt,
             "std_output_tokens": answer,
             "max_tokens": 8192,
         }

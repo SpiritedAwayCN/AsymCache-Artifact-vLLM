@@ -11,6 +11,7 @@ from vllm.core.block.prefix_caching_block import (ComputedBlocksTracker,
                                                   LastAccessBlocksTracker,
                                                   PrefixCachingBlockAllocator)
 from vllm.core.block.utils import check_no_caching_or_swa_for_blockmgr_encdec
+from vllm.core.evictor import EvictionPolicy, Evictor, make_evictor
 from vllm.core.interfaces import AllocStatus, BlockSpaceManager
 from vllm.sequence import Sequence, SequenceGroup, SequenceStatus
 from vllm.utils import Device
@@ -71,6 +72,7 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
         watermark: float = 0.01,
         sliding_window: Optional[int] = None,
         enable_caching: bool = False,
+        eviction_policy:  EvictionPolicy = EvictionPolicy.LRU,
     ) -> None:
         self.block_size = block_size
         self.num_total_gpu_blocks = num_gpu_blocks
@@ -101,6 +103,7 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
             num_gpu_blocks=num_gpu_blocks,
             num_cpu_blocks=num_cpu_blocks,
             block_size=block_size,
+            eviction_policy=eviction_policy,
         )
 
         self.block_tables: Dict[SeqId, BlockTable] = {}
@@ -173,9 +176,11 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
             # Modified by SpiritedAwayCN
             segment_status = 0
             first_compute_start = -1
+            seq.suffix_computed_block_locs = [0, 0, 0, 0, 0]
+            gpu_allocator = self.block_allocator._allocators[Device.GPU]
             
             for logical_idx, block in enumerate(block_table._blocks._blocks):
-                if block.computed:
+                if gpu_allocator._block_tracker[block.block_id].computed:
                     if segment_status == 1:
                         # multiple of 64
                         segment_status += 1
@@ -196,37 +201,40 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
             # TODO: move `total_count` to refcounter
             if segment_status == 2:
                 seq.suffix_computed_block_locs[1] = logical_idx
-            elif seq.suffix_computed_block_locs[0] > 0 and isinstance(self.block_allocator._allocators[Device.GPU], PrefixCachingBlockAllocator):
-                blk = block_table._blocks._blocks[seq.suffix_computed_block_locs[1]]
-                blk = self.block_allocator._allocators[Device.GPU]._block_tracker[blk.block_id]
-                
-                for block in block_table._blocks._blocks[seq.suffix_computed_block_locs[0]:seq.suffix_computed_block_locs[1]]:
-                    tgt_blk = self.block_allocator._allocators[Device.GPU]._block_tracker[block.block_id]
-                    tgt_blk.total_count = blk.total_count
-                    tgt_blk.last_accessed = blk.last_accessed
-            
             if segment_status == 4:
                 seq.suffix_computed_block_locs[3] = logical_idx
-            elif seq.suffix_computed_block_locs[2] > 0:
-                blk = block_table._blocks._blocks[seq.suffix_computed_block_locs[3]]
-                blk = self.block_allocator._allocators[Device.GPU]._block_tracker[blk.block_id]
-                
-                for block in block_table._blocks._blocks[seq.suffix_computed_block_locs[2]:seq.suffix_computed_block_locs[3]]:
-                    tgt_blk = self.block_allocator._allocators[Device.GPU]._block_tracker[block.block_id]
-                    tgt_blk.total_count = blk.total_count
-                    tgt_blk.last_accessed = blk.last_accessed
-            
             if first_compute_start == -1:
                 first_compute_start = logical_idx
+            
+            if isinstance(gpu_allocator, PrefixCachingBlockAllocator):
+                # rewrite the total_count and last_accessed of the uncached blocks to be the same as the subsequent cached blocks
+                if seq.suffix_computed_block_locs[0] > 0:
+                    blk = block_table._blocks._blocks[seq.suffix_computed_block_locs[0] - 1]
+                    blk = gpu_allocator._block_tracker[blk.block_id]
+                    
+                    for block in block_table._blocks._blocks[first_compute_start:seq.suffix_computed_block_locs[0]]:
+                        tgt_blk = gpu_allocator._block_tracker[block.block_id]
+                        tgt_blk.total_count = blk.total_count
+                        tgt_blk.last_accessed = blk.last_accessed
                 
+                if seq.suffix_computed_block_locs[2] > 0:
+                    blk = block_table._blocks._blocks[seq.suffix_computed_block_locs[2] - 1]
+                    blk = gpu_allocator._block_tracker[blk.block_id]
+                    
+                    for block in block_table._blocks._blocks[seq.suffix_computed_block_locs[1]:seq.suffix_computed_block_locs[2]]:
+                        tgt_blk = gpu_allocator._block_tracker[block.block_id]
+                        tgt_blk.total_count = blk.total_count
+                        tgt_blk.last_accessed = blk.last_accessed
+
             seq.suffix_computed_block_locs[0] *= self.block_size
             seq.suffix_computed_block_locs[1] *= self.block_size
             seq.suffix_computed_block_locs[2] *= self.block_size
             seq.suffix_computed_block_locs[3] *= self.block_size
+            seq.suffix_computed_block_locs[4] = first_compute_start * self.block_size
             
-            # logger.info(f"seq: {seq}, "
-            #             f"suffix_computed_block_locs: {seq.suffix_computed_block_locs}, "
-            #             f"first_compute_start: {first_compute_start * self.block_size}")
+            logger.info(f"seq: {seq}, "
+                         f"suffix_computed_block_locs: {seq.suffix_computed_block_locs}, "
+                         f"first_compute_start: {first_compute_start * self.block_size}")
 
         return block_table
 
@@ -393,7 +401,9 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
             all_blocks = self.block_tables[seq.seq_id].physical_block_ids
             num_cached_tokens = (
                 self._computed_blocks_tracker.get_num_cached_tokens(seq, firstseg_only=firstseg_only))
-            assert num_cached_tokens % self.block_size == 0
+            assert num_cached_tokens % self.block_size == 0, \
+                f"num_cached_tokens {num_cached_tokens} is not multiple of block_size {self.block_size}. seq: {seq}."
+                
             num_cached_blocks = num_cached_tokens // self.block_size
             computed_block_ids = all_blocks[:num_cached_blocks]
             computed_seq_block_ids.append(computed_block_ids)
@@ -584,8 +594,10 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
         else:
             return AllocStatus.LATER
 
-    def get_num_cached_tokens(self, seq: Sequence) -> int:
+    def get_num_cached_tokens(self, seq: Sequence, first_seg: bool = False, start_idx: int = 0, end_idx: int = -1,
+                              num_uncached: Optional[int] = None) -> int:
         """Get the number of tokens in blocks that are already computed and
         cached in the block manager for the sequence.
         """
-        return self._computed_blocks_tracker.get_num_cached_tokens(seq)
+        return self._computed_blocks_tracker.get_num_cached_tokens(seq, first_seg, start_idx, end_idx,
+                                                                   num_uncached=num_uncached)

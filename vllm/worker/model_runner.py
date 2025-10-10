@@ -276,7 +276,7 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
             encoder_seq_len: int = 0,
             
             # MODIFIED: For cache segment in the middle
-            suffix_computed_block_locs: List[int] = [0, 0, 0, 0],
+            suffix_computed_block_locs: List[int] = [0, 0, 0, 0, 0],
             input_tokens_seg2: Optional[List[List[int]]] = None,
             input_positions_seg2: Optional[List[List[int]]] = None,
             input_tokens_seg3: Optional[List[List[int]]] = None,
@@ -655,6 +655,14 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
         remaining blocks.
         """
         computed_block_nums = inter_data.computed_block_nums
+        
+        # clamp suffix_computed_block_locs
+        # if seq_len < inter_data.suffix_computed_block_locs[2]:
+        #     inter_data.suffix_computed_block_locs[2] = 0
+        #     inter_data.suffix_computed_block_locs[3] = 0
+        #     if seq_len < inter_data.suffix_computed_block_locs[0]:
+        #         inter_data.suffix_computed_block_locs[0] = 0
+        #         inter_data.suffix_computed_block_locs[1] = 0
 
         # Note that prefix caching does not support sliding window.
         has_2_segments = (inter_data.suffix_computed_block_locs is not None and

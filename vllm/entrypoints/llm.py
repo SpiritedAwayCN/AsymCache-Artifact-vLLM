@@ -4,7 +4,7 @@ import itertools
 import warnings
 from collections.abc import Sequence
 from contextlib import contextmanager
-from typing import (TYPE_CHECKING, Any, Callable, ClassVar, Optional, Union,
+from typing import (TYPE_CHECKING, Any, Callable, ClassVar, Optional, Union, Dict,
                     cast, overload)
 
 import cloudpickle
@@ -302,6 +302,8 @@ class LLM:
         guided_options_request: Optional[Union[LLMGuidedOptions,
                                                GuidedDecodingRequest]] = None,
         slo_urgents: Optional[Union[float, Sequence[float]]] = None,
+        slo_dict: Optional[Union[Dict[str, float], Sequence[Dict[str, float]]]] = None,
+        user_id: Optional[Union[int, Sequence[int]]] = None,
     ) -> list[RequestOutput]:
         ...
 
@@ -319,6 +321,8 @@ class LLM:
         guided_options_request: Optional[Union[LLMGuidedOptions,
                                                GuidedDecodingRequest]] = None,
         slo_urgents: Optional[Union[float, Sequence[float]]] = None,
+        slo_dict: Optional[Union[Dict[str, float], Sequence[Dict[str, float]]]] = None,
+        user_id: Optional[Union[int, Sequence[int]]] = None,
     ) -> list[RequestOutput]:
         ...
 
@@ -337,6 +341,8 @@ class LLM:
         guided_options_request: Optional[Union[LLMGuidedOptions,
                                                GuidedDecodingRequest]] = None,
         slo_urgents: Optional[Union[float, Sequence[float]]] = None,
+        slo_dict: Optional[Union[Dict[str, float], Sequence[Dict[str, float]]]] = None,
+        user_id: Optional[Union[int, Sequence[int]]] = None,
     ) -> list[RequestOutput]:
         ...
 
@@ -355,6 +361,8 @@ class LLM:
         guided_options_request: Optional[Union[LLMGuidedOptions,
                                                GuidedDecodingRequest]] = None,
         slo_urgents: Optional[Union[float, Sequence[float]]] = None,
+        slo_dict: Optional[Union[Dict[str, float], Sequence[Dict[str, float]]]] = None,
+        user_id: Optional[Union[int, Sequence[int]]] = None,
     ) -> list[RequestOutput]:
         ...
 
@@ -371,6 +379,8 @@ class LLM:
         guided_options_request: Optional[Union[LLMGuidedOptions,
                                                GuidedDecodingRequest]] = None,
         slo_urgents: Optional[Union[float, Sequence[float]]] = None,
+        slo_dict: Optional[Union[Dict[str, float], Sequence[Dict[str, float]]]] = None,
+        user_id: Optional[Union[int, Sequence[int]]] = None,
     ) -> list[RequestOutput]:
         ...
 
@@ -393,6 +403,8 @@ class LLM:
                                                GuidedDecodingRequest]] = None,
         priority: Optional[list[int]] = None,
         slo_urgents: Optional[Union[float, Sequence[float]]] = None,
+        slo_dict: Optional[Union[Dict[str, float], Sequence[Dict[str, float]]]] = None,
+        user_id: Optional[Union[int, Sequence[int]]] = None,
     ) -> list[RequestOutput]:
         """Generates the completions for the input prompts.
 
@@ -471,7 +483,9 @@ class LLM:
             prompt_adapter_request=prompt_adapter_request,
             guided_options=guided_options_request,
             priority=priority,
-            slo_urgents=slo_urgents,)
+            slo_urgents=slo_urgents,
+            slo_dict=slo_dict,
+            user_id=user_id,)
 
         outputs = self._run_engine(use_tqdm=use_tqdm)
         return self.engine_class.validate_outputs(outputs, RequestOutput)
@@ -694,6 +708,8 @@ class LLM:
         chat_template_kwargs: Optional[dict[str, Any]] = None,
         mm_processor_kwargs: Optional[dict[str, Any]] = None,
         slo_urgents: Optional[Union[float, Sequence[float]]] = None,
+        slo_dict: Optional[Union[Dict[str, float], Sequence[Dict[str, float]]]] = None,
+        user_id: Optional[Union[int, Sequence[int]]] = None,
     ) -> list[RequestOutput]:
         """
         Generate responses for a chat conversation.
@@ -820,6 +836,8 @@ class LLM:
             use_tqdm=use_tqdm,
             lora_request=lora_request,
             slo_urgents=slo_urgents,
+            slo_dict=slo_dict,
+            user_id=user_id,
         )
 
     @overload
@@ -850,6 +868,8 @@ class LLM:
         lora_request: Optional[Union[list[LoRARequest], LoRARequest]] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         slo_urgents: Optional[Union[float, Sequence[float]]] = None,
+        slo_dict: Optional[Union[Dict[str, float], Sequence[Dict[str, float]]]] = None,
+        user_id: Optional[Union[int, Sequence[int]]] = None,
     ) -> list[PoolingRequestOutput]:
         ...
 
@@ -866,6 +886,8 @@ class LLM:
         lora_request: Optional[Union[list[LoRARequest], LoRARequest]] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         slo_urgents: Optional[Union[float, Sequence[float]]] = None,
+        slo_dict: Optional[Union[Dict[str, float], Sequence[Dict[str, float]]]] = None,
+        user_id: Optional[Union[int, Sequence[int]]] = None,
     ) -> list[PoolingRequestOutput]:
         ...
 
@@ -883,6 +905,8 @@ class LLM:
         lora_request: Optional[Union[list[LoRARequest], LoRARequest]] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         slo_urgents: Optional[Union[float, Sequence[float]]] = None,
+        slo_dict: Optional[Union[Dict[str, float], Sequence[Dict[str, float]]]] = None,
+        user_id: Optional[Union[int, Sequence[int]]] = None,
     ) -> list[PoolingRequestOutput]:
         ...
 
@@ -900,6 +924,8 @@ class LLM:
         lora_request: Optional[Union[list[LoRARequest], LoRARequest]] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         slo_urgents: Optional[Union[float, Sequence[float]]] = None,
+        slo_dict: Optional[Union[Dict[str, float], Sequence[Dict[str, float]]]] = None,
+        user_id: Optional[Union[int, Sequence[int]]] = None,
     ) -> list[PoolingRequestOutput]:
         ...
 
@@ -915,6 +941,8 @@ class LLM:
         lora_request: Optional[Union[list[LoRARequest], LoRARequest]] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         slo_urgents: Optional[Union[float, Sequence[float]]] = None,
+        slo_dict: Optional[Union[Dict[str, float], Sequence[Dict[str, float]]]] = None,
+        user_id: Optional[Union[int, Sequence[int]]] = None,
     ) -> list[PoolingRequestOutput]:
         ...
 
@@ -1399,6 +1427,8 @@ class LLM:
         guided_options: Optional[GuidedDecodingRequest] = None,
         priority: Optional[list[int]] = None,
         slo_urgents: Optional[Union[float, Sequence[float]]] = None,
+        slo_dict: Optional[Union[Dict[str, float], Sequence[Dict[str, float]]]] = None,
+        user_id: Optional[Union[int, Sequence[int]]] = None,
     ) -> None:
         if guided_options is not None:
             warnings.warn(
@@ -1423,7 +1453,13 @@ class LLM:
         if isinstance(slo_urgents, list) and len(slo_urgents) != num_requests:
             raise ValueError("The lengths of prompts and slo_urgents "
                              "must be the same.")
-
+        if isinstance(slo_dict, list) and len(slo_dict) != num_requests:
+            raise ValueError("The lengths of prompts and slo_dict "
+                             "must be the same.")
+        if isinstance(user_id, list) and len(user_id) != num_requests:
+            raise ValueError("The lengths of prompts and user_id "
+                             "must be the same.")
+                
         for sp in params if isinstance(params, list) else (params, ):
             if isinstance(sp, SamplingParams):
                 self._add_guided_params(sp, guided_options)
@@ -1446,6 +1482,8 @@ class LLM:
                 prompt_adapter_request=prompt_adapter_request,
                 priority=priority[i] if priority else 0,
                 slo_urgent=slo_urgents[i] if isinstance(slo_urgents, list) else slo_urgents,
+                slo_dict=slo_dict[i] if isinstance(slo_dict, list) else slo_dict,
+                user_id=user_id[i] if isinstance(user_id, list) else user_id,
             )
 
     def _add_request(
@@ -1457,6 +1495,8 @@ class LLM:
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         priority: int = 0,
         slo_urgent: float = 0.0,
+        slo_dict: Optional[Dict[str, float]] = None,
+        user_id: int = 0,
     ) -> None:
         request_id = str(next(self.request_counter))
         self.llm_engine.add_request(

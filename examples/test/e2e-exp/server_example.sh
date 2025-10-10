@@ -4,19 +4,25 @@
 # and then transfer the KV cache between them.
 
 export VLLM_HOST_IP=$(hostname -I | awk '{print $1}')
-export VLLM_PORT=12345
+export VLLM_PORT=12349
 export VLLM_ALLOW_DEPRECATED_BLOCK_MANAGER_V1=1 
 export TRANSFORMERS_OFFLINE=1
 export VLLM_USE_V1=0
 export VLLM_USE_POD_ATTN=1
 export VLLM_SCHEDULE_ONE_PREFILL=1
+export HALF_LIFE=5000
 export VLLM_EVICTOR_POLICY=mwf
+export VLLM_LOGGING_LEVEL=DEBUG
+# export CUDA_LAUNCH_BLOCKING=1
+export HF_ENDPOINT=https://hf-mirror.com
+export NCCL_ALGO=Ring
+export CSET_DIR='../../../csrc/c_set/'
 # install quart first -- required for disagg prefill proxy serve
-if python3 -c "import quart" &> /dev/null; then
+if python -c "import quart" &> /dev/null; then
     echo "Quart is already installed."
 else
     echo "Quart is not installed. Installing..."
-    python3 -m pip install quart
+    python -m pip install quart
 fi 
 
 # a function that waits vLLM server to start
@@ -30,21 +36,23 @@ wait_for_server() {
 }
 
 # prefilling instance, which is the KV producer
-CUDA_VISIBLE_DEVICES=4,5,6,7 python3 \
+CUDA_VISIBLE_DEVICES=0,1,2,3 python \
     -m vllm.entrypoints.openai.api_server \
     --model LargeWorldModel/LWM-Text-1M \
-    -tp 2 \
-    --port 8047 \
+    -tp 4 \
+    --port 8048 \
     --block-size 64 \
     --dtype float16 \
     --enable-prefix-caching \
     --enable-chunked-prefill \
-    --max-model-len 10000 \
+    --max-model-len 524288 \
+    --max_num_batched_tokens 8192 \
     --gpu-memory-utilization 0.8 &
     # --collect_detailed_traces all \
+    # --enforce-eager \
 
 # decoding instance, which is the KV consumer
-# VLLM_DISTRIBUTED_KV_ROLE=consumer CUDA_VISIBLE_DEVICES=2 python3 \
+# VLLM_DISTRIBUTED_KV_ROLE=consumer CUDA_VISIBLE_DEVICES=2 python \
 #     -m vllm.entrypoints.openai.api_server \
 #     --model /home/tzl/huggingface/modelzoo/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659 \
 #     --port 8200 \
@@ -61,7 +69,7 @@ sleep 45
 # the workflow of this proxy:
 # - send the request to prefill vLLM instance (port 8100), change max_tokens to 1
 # - after the prefill vLLM finishes prefill, send the request to decode vLLM instance
-# python3 ../../benchmarks/disagg_benchmarks/disagg_prefill_proxy_server.py &
+# python ../../benchmarks/disagg_benchmarks/disagg_prefill_proxy_server.py &
 # sleep 7
 
 # serve two example requests
@@ -105,4 +113,4 @@ echo "请按 Ctrl+C 结束执行..."
 sleep infinity
 # Cleanup commands, suppressing their output
 ps -e | grep pt_main_thread | awk '{print $1}' | xargs kill -9 > /dev/null 2>&1
-pkill -f python3 > /dev/null 2>&1
+pkill -f python > /dev/null 2>&1

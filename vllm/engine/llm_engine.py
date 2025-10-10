@@ -561,6 +561,8 @@ class LLMEngine:
         trace_headers: Optional[Mapping[str, str]] = None,
         priority: int = 0,
         slo_urgent: float = 0.0,
+        slo_dict: Optional[Dict[str, float]] = None,
+        user_id: int = 0,
     ) -> Optional[SequenceGroup]:
         """Add a processed request to the engine's request pool.
         return the created sequence group.
@@ -588,7 +590,7 @@ class LLMEngine:
         encoder_inputs, decoder_inputs = split_enc_dec_inputs(processed_inputs)
 
         seq = Sequence(seq_id, decoder_inputs, block_size, eos_token_id,
-                       lora_request, prompt_adapter_request, slo_urgent=slo_urgent)
+                       lora_request, prompt_adapter_request, slo_urgent=slo_urgent, slo_dict=slo_dict, user_id=user_id)
 
         encoder_seq = (None if encoder_inputs is None else Sequence(
             seq_id, encoder_inputs, block_size, eos_token_id, lora_request,
@@ -646,6 +648,8 @@ class LLMEngine:
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         priority: int = 0,
         slo_urgent: float = 0.0,
+        slo_dict: Optional[Dict[str, float]] = None,
+        user_id: int = 0,
     ) -> None:
         ...
 
@@ -663,6 +667,8 @@ class LLMEngine:
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         priority: int = 0,
         slo_urgent: float = 0.0,
+        slo_dict: Optional[Dict[str, float]] = None,
+        user_id: int = 0,
     ) -> None:
         ...
 
@@ -684,6 +690,8 @@ class LLMEngine:
             *,
             inputs: Optional[PromptType] = None,  # DEPRECATED
             slo_urgent: float = 0.0,
+            slo_dict: Optional[Dict[str, float]] = None,
+            user_id: int = 0,
     ) -> None:
         """Add a request to the engine's request pool.
 
@@ -780,6 +788,8 @@ class LLMEngine:
             trace_headers=trace_headers,
             priority=priority,
             slo_urgent=slo_urgent,
+            slo_dict=slo_dict,
+            user_id=user_id,
         )
 
     def _create_sequence_group_with_sampling(

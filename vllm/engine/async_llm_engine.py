@@ -985,6 +985,8 @@ class AsyncLLMEngine(EngineClient):
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         priority: int = 0,
         slo_urgents: Optional[Union[float, List[float]]] = None,
+        slo_dict: Optional[Union[Dict[str, float], List[Dict[str, float]]]] = None,
+        user_id: Optional[Union[int, List[int]]] = None,
     ) -> AsyncGenerator[RequestOutput, None]:
         """Generate outputs for a request.
 
