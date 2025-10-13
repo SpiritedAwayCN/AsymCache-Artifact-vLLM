@@ -127,7 +127,7 @@ class LRUEvictor(Evictor):
                     if b in self.free_table:
                         self.free_table[b].last_accessed = now
                 # print(f"protect={self.protect_blocks}")
-                logger.info(f"Evicting block_id {block_id} with content_hash {content_hash}, last_accessed {last_accessed}, num_hashed_tokens {-v}")
+                # logger.info(f"Evicting block_id {block_id} with content_hash {content_hash}, last_accessed {last_accessed}, num_hashed_tokens {-v}")
                 return block_id, content_hash
 
         raise ValueError("No usable cache memory left")
@@ -323,8 +323,8 @@ def make_evictor(eviction_policy: EvictionPolicy) -> Evictor:
         return LRUEvictor()
     elif eviction_policy == EvictionPolicy.MWF:
         from vllm.core.block.common import BASE_FREQ
-        c = 2.91200787e-01 + 1.04221165e-04
-        k = 2 * 1.04221165e-04 / 16
+        c = 16.975203511045493
+        k = 0.00043533405552524906
         return WeightEvictor(BASE_FREQ, lambda x: k * x + c)
     elif eviction_policy == EvictionPolicy.LFU:
         from vllm.core.block.common import BASE_FREQ

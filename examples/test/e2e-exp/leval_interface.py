@@ -1,46 +1,50 @@
-import time
-import json
-import random
 import os
 import glob
-import sys
-import argparse
-import pandas as pd
+import time
+import json
+import tqdm
 import asyncio
 import aiohttp
-import tqdm
+import argparse
+import pandas as pd
+from transformers import AutoTokenizer
 
-from transformers import (
-    AutoTokenizer,
-    PreTrainedTokenizerBase,
-)
-
-BASE_DIR = '/jizhicfs/marvinhjia/sca/'
+BASE_DIR = '/jizhicfs/marvinhjia/sca'
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
-# get ip equivalent to $(hostname -I | awk '{print $1}')
 vllm_host_ip = os.popen("hostname -I | awk '{print $1}'").read().strip()
 API_URL = f'http://{vllm_host_ip}:8048/v1/completions'
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--div', '-d', type=int, default=80)
 parser.add_argument('--qps', '-q', type=float, default=0.5)
-parser.add_argument('--half_life', '-hl', type=int, default=10)
+parser.add_argument('--half_life', '-hl', type=int, default=500)
 parser.add_argument('--policy', '-p', type=str, choices=['mwf', 'lru', 'lfu'], default='mwf')
+parser.add_argument('--dataset', '-ds', type=str, choices=['leval', 'longbench'], default='leval')
+parser.add_argument('--use_model_output', '-mo', action='store_true',help='是否要启用模型生成的输出')
+parser.add_argument('--model_output_file', '-mf', type=str, default=None, help='deepseek生成的输出jsonl文件路径')
 args = parser.parse_args()
 
-output_file_name = f"LEval_simulator_{args.policy}_qps{args.qps}_div{args.div}_h{args.half_life}.jsonl"
-input_file_name = f'./leval_data/outputs_q{args.qps}_d{args.div}.csv'
-# output_file_name='./test_trace_output.jsonl' # for testing
-# input_file_name = './leval_data/test_trace.csv'  # for testing
-df = pd.read_csv(input_file_name)
+# 根据dataset参数选择路径前缀
+if args.dataset == 'leval':
+    dataset_dir = f"{BASE_DIR}/LEval-data"
+    dataset_prefix = "LEval"
+elif args.dataset == 'longbench':
+    dataset_dir = f"{BASE_DIR}/Longbench"
+    dataset_prefix = "LongBench"
+else:
+    raise ValueError(f"Unknown dataset: {args.dataset}")
 
-# model = "meta-llama/Meta-Llama-3.1-8B-Instruct"
+
+input_file_name = f'./{dataset_prefix.lower()}_data/outputs_q{args.qps}_d{args.div}.csv'
+output_file_name = f"{dataset_prefix}_simulator_{args.policy}_qps{args.qps}_div{args.div}_h{args.half_life}.jsonl"
+
+df = pd.read_csv(input_file_name)
 model = "LargeWorldModel/LWM-Text-1M"
 tokenizer = AutoTokenizer.from_pretrained(model)
 
 # load datasets
 datasets = {}
-for jsonl_file in glob.glob(f"{BASE_DIR}/LEval-data/**/*.jsonl", recursive=True):
+for jsonl_file in glob.glob(f"{dataset_dir}/**/*.jsonl", recursive=True):
     with open(jsonl_file, 'r', encoding='utf-8') as file:
         for line_number, line in enumerate(file):
             data = json.loads(line)
@@ -48,6 +52,17 @@ for jsonl_file in glob.glob(f"{BASE_DIR}/LEval-data/**/*.jsonl", recursive=True)
             if file_name not in datasets:
                 datasets[file_name] = []
             datasets[file_name].append(data)
+
+# 加载deepseek的输出
+model_outputs = {}
+if args.use_model_output and args.model_output_file:
+    with open(args.model_output_file, 'r', encoding='utf-8') as f:
+        for line in f:
+            item = json.loads(line)
+            key = (item['file'], item['line'], item['turn'])
+            model_outputs[key] = item['generate_text']
+    print(f"[INFO] Loaded {len(model_outputs)} model-generated outputs from {args.model_output_file}")
+
 
 def generate_prompt_and_answer(conversations):
     prompt, answer_token_ids = None, None
@@ -58,11 +73,13 @@ def generate_prompt_and_answer(conversations):
         encoded_prompt_with_answer = tokenizer.encode(prompt_with_answer)
         answer_token_ids = encoded_prompt_with_answer[len(encoded_prompt): ]
     return prompt, answer_token_ids
-    
+
+
 def load_requests_from_csv(file_path):
     df = pd.read_csv(file_path)
     df['Timestamp'] = pd.to_datetime(df['Timestamp'], unit='s')  # 转换为日期时间格式
     return df
+
 
 def prepare_requests():
     for _, row in df.iterrows():
@@ -71,20 +88,22 @@ def prepare_requests():
 
         msgs2 = [{'role': 'user', 'content': data['input'] + '\n\n'}]
         for idx, question in enumerate(data['instructions'][:turn_id + 1]):
+            if args.use_model_output:
+                gen_key = (file_name, line_number, idx)
+                answer_text = model_outputs.get(gen_key, data['outputs'][idx])
+            else:
+                answer_text = data['outputs'][idx]
             if idx == 0:
                 msgs2[0]['content'] += question
-                msgs2.append({'role': 'assistant', 'content': data['outputs'][idx]})
+                msgs2.append({'role': 'assistant', 'content': answer_text})            
             else:
                 msgs2.append({'role': 'user', 'content': question})
-                msgs2.append({'role': 'assistant', 'content': data['outputs'][idx]})
+                msgs2.append({'role': 'assistant', 'content': answer_text})
 
         prompt, answer = generate_prompt_and_answer(msgs2)
-        # print(f"prompt:\n{prompt}\n\n")
-        # print(f"answer:\n{answer}\n\n")
-        # 将prompt加入请求队列
-        
         timestamp = row['Timestamp']
         yield timestamp, prompt, answer
+
 
 async def fetch(prompt, answer, output_file):
     async with aiohttp.ClientSession(timeout=AIOHTTP_TIMEOUT) as session:
@@ -96,19 +115,18 @@ async def fetch(prompt, answer, output_file):
         }
         headers = {
             "Content-Type": "application/json",
-            # "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}"
         }
         
         async with session.post(API_URL, json=payload, headers=headers) as response:
             response_json = await response.json()
-            # output_file is a .jsonl file
             output_file.write(json.dumps(response_json) + '\n')
         
         output_file.flush()
 
+
 async def schedule_request(output_file):
-    first_time = -1
     tasks = []
+    first_time = -1
     
     for timestamp, prompt, answer in tqdm.tqdm(prepare_requests(), total=len(df)):
         now = time.time()
@@ -122,11 +140,9 @@ async def schedule_request(output_file):
             await asyncio.sleep(timestamp - now)
         task = asyncio.create_task(fetch(prompt, answer, output_file))
         tasks.append(task)
-        
-        # break
     
     await asyncio.gather(*tasks)
-        
+
 
 if __name__ == '__main__':
     with open(output_file_name, 'w') as output_file:

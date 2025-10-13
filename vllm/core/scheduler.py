@@ -1694,7 +1694,7 @@ class Scheduler:
                                (all_prefills
                                 and not self.scheduler_config.is_multi_step)
                                else running_scheduled.num_lookahead_slots)
-        log_all_sequence_groups(prefills, running_scheduled, swapped_in)
+        # log_all_sequence_groups(prefills, running_scheduled, swapped_in)
         return SchedulerOutputs(
             scheduled_seq_groups=scheduled_seq_groups,
             num_prefill_groups=num_prefill_groups,
