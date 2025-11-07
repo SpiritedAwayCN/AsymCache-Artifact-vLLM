@@ -5,6 +5,22 @@ from vllm.utils import Device
 from vllm.sequence import Sequence, SequenceGroup
 
 import os
+import math
+
+_use_tanh = os.environ.get('USE_TANH', 'None') == '1'
+_tanh_delta = os.environ.get('TANH_DELTA', 10)
+_tanh_theta = os.environ.get('TANH_THETA', 1)
+USE_TANH = False
+if _use_tanh:
+    try:
+        TANH_DELTA = float(_tanh_delta)
+    except:
+        TANH_DELTA = 10
+    try:
+        TANH_THETA = float(_tanh_theta)
+    except:
+        TANH_THETA = 1
+    USE_TANH = True
 
 _half_life = os.environ.get('HALF_LIFE', 10)
 try:
@@ -36,7 +52,10 @@ class PhysicalTokenBlock:
         self.ref_count = 0
         self.last_accessed = DEFAULT_LAST_ACCESSED_TIME
         # self.ref_seqs: Set[Sequence] = set()
-        self.total_count = 0
+        if USE_TANH:
+            self.total_count = (0, 0)
+        else:
+            self.total_count = 0
 
         self.computed = False
         
@@ -55,12 +74,28 @@ class PhysicalTokenBlock:
     
     def add_total_count(self, count: int, now: float):
         if self.last_accessed != DEFAULT_LAST_ACCESSED_TIME:
-            self.total_count *= BASE_FREQ ** (now - self.last_accessed)
-        self.total_count += count
+            if self.USE_TANH:
+                H, T = self.total_count
+                last = self.last_accessed
+                H *= math.exp(-(now - last) / TANH_THETA)
+                T = 1-2/(1+(1+T)/(1-T)*math.exp(-2*(now-last)/TANH_THETA))
+                self.total_count = (H + T, math.tanh(TANH_DELTA / TANH_THETA) * count)
+            else:
+                self.total_count *= BASE_FREQ ** (now - self.last_accessed)
+                self.total_count += count
     
     def get_total_count(self, now: Optional[float] = None) -> float:
-        return self.total_count * \
-            (1 if now is None else BASE_FREQ ** (now - self.last_accessed))
+        if self.USE_TANH:
+            H, T = self.total_count
+            last = self.last_accessed
+            if now is None:
+                return H + T
+            tmp = math.exp(-2 * (now - self.last_accessed) / TANH_THETA)
+            return H * math.exp(-(now - last) / TANH_THETA) + \
+                    1-2/(1+(1+T)/(1-T)*math.exp(-2*(now-last)/TANH_THETA))
+        else:
+            return self.total_count * \
+                (1 if now is None else BASE_FREQ ** (now - self.last_accessed))
 
 
 class BlockTable:

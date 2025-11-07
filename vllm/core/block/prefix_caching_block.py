@@ -4,10 +4,10 @@ import sys
 from bisect import bisect_left
 from os.path import commonprefix
 from typing import (Callable, Dict, FrozenSet, Iterable, List, Optional, Set,
-                    Tuple)
+                    Tuple, Union)
 
 from vllm.core.block.common import (CacheMetricData, CopyOnWriteTracker,
-                                    get_all_blocks_recursively, BASE_FREQ)
+                                    get_all_blocks_recursively, BASE_FREQ, USE_TANH, TANH_DELTA, TANH_THETA)
 from vllm.core.block.interfaces import (Block, BlockAllocator, BlockId, Device,
                                         DeviceAwareBlockAllocator)
 from vllm.core.block.naive_block import (BlockPool, NaiveBlock,
@@ -15,6 +15,8 @@ from vllm.core.block.naive_block import (BlockPool, NaiveBlock,
 from vllm.core.evictor import EvictionPolicy, Evictor, make_evictor
 from vllm.logger import init_logger
 from vllm.sequence import Sequence
+
+import math
 
 PrefixHash = int
 
@@ -34,7 +36,10 @@ class BlockTracker:
     def reset(self):
         self.last_accessed: float = _DEFAULT_LAST_ACCESSED_TIME
         self.computed: bool = False
-        self.total_count: Optional[float] = 0
+        if USE_TANH:
+            self.total_count: Optional[Tuple[float, float]] = (0, 0)
+        else:
+            self.total_count: Optional[float] = 0
 
     def __init__(self):
         self.active: bool = False
@@ -596,8 +601,15 @@ class PrefixCachingBlockAllocator(BlockAllocator):
 
         for block_id in block_ids:
             if self._block_tracker[block_id].active:
-                self._block_tracker[block_id].total_count *= BASE_FREQ ** (now - self._block_tracker[block_id].last_accessed)
-                self._block_tracker[block_id].total_count += 1
+                if USE_TANH:
+                    H, T = self._block_tracker[block_id].total_count
+                    last = self._block_tracker[block_id].last_accessed
+                    H *= math.exp(-(now - last) / TANH_THETA)
+                    T = 1-2/(1+(1+T)/(1-T)*math.exp(-2*(now-last)/TANH_THETA))
+                    self._block_tracker[block_id].total_count = (H + T, math.tanh(TANH_DELTA / TANH_THETA))
+                else:
+                    self._block_tracker[block_id].total_count *= BASE_FREQ ** (now - self._block_tracker[block_id].last_accessed)
+                    self._block_tracker[block_id].total_count += 1
                 self._block_tracker[block_id].last_accessed = now
             elif block_id in self.evictor:
                 self.evictor.update(block_id, now)
@@ -614,7 +626,7 @@ class PrefixCachingBlockAllocator(BlockAllocator):
     def _track_block_id(self, block_id: Optional[BlockId],
                         computed: bool,
                         last_accessed: Optional[float] = None,
-                        total_count: Optional[float] = None) -> None:
+                        total_count: Optional[Union[float, Tuple[float, float]]] = None) -> None:
         assert block_id is not None
         self._block_tracker[block_id].enable()
         self._block_tracker[block_id].computed = computed
