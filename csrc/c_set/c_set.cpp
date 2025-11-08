@@ -112,11 +112,11 @@ struct ItemTanh {
         auto h2 = rhs.w1, t2 = rhs.w2, q = h2 + t2;
         if (last_accessed < rhs.last_accessed) {
             h1 *= exp(-(rhs.last_accessed - last_accessed) / constant::TANH_THETA);
-            t1 = 1-2/(1+(1+h1)/(1-h1)*exp(-2*(rhs.last_accessed - last_accessed)/constant::TANH_THETA));
+            t1 = 1 - 2 / ((2/(1-t1)-1) * exp(-2*(rhs.last_accessed - last_accessed)/constant::TANH_THETA) + 1);
             p = h1 + t1;
         } else {
             h2 *= exp(-(last_accessed - rhs.last_accessed) / constant::TANH_THETA);
-            t2 = 1-2/(1+(1+h2)/(1-h2)*exp(-2*(last_accessed - rhs.last_accessed)/constant::TANH_THETA));
+            t2 = 1 - 2 / ((2/(1-t2)-1) * exp(-2*(last_accessed - rhs.last_accessed)/constant::TANH_THETA) + 1);
             q = h2 + t2;
         }
         p *= func;
@@ -136,11 +136,11 @@ struct Item2Tanh {
         auto h2 = rhs.w1, t2 = rhs.w2, q = h2 + t2;
         if (last_accessed < rhs.last_accessed) {
             h1 *= exp(-(rhs.last_accessed - last_accessed) / constant::TANH_THETA);
-            t1 = 1-2/(1+(1+h1)/(1-h1)*exp(-2*(rhs.last_accessed - last_accessed)/constant::TANH_THETA));
+            t1 = 1 - 2 / ((2/(1-t1)-1) * exp(-2*(rhs.last_accessed - last_accessed)/constant::TANH_THETA) + 1);
             p = h1 + t1;
         } else {
             h2 *= exp(-(last_accessed - rhs.last_accessed) / constant::TANH_THETA);
-            t2 = 1-2/(1+(1+h2)/(1-h2)*exp(-2*(last_accessed - rhs.last_accessed)/constant::TANH_THETA));
+            t2 = 1 - 2 / ((2/(1-t2)-1) * exp(-2*(last_accessed - rhs.last_accessed)/constant::TANH_THETA) + 1);
             q = h2 + t2;
         }
         if (p-q < -constant::epsilon || p-q > constant::epsilon) return p<q;

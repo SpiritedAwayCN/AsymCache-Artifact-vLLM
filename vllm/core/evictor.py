@@ -241,7 +241,7 @@ class LFUEvictor(Evictor):
             self.heap.erase(block.total_count[0], block.total_count[1], block.last_accessed, block_id, block.num_hashed_tokens)
             H, T = block.total_count
             H *= math.exp(-(last_accessed - block.last_accessed) / TANH_THETA)
-            T = 1-2/(1+(1+T)/(1-T)*math.exp(-2*(last_accessed - block.last_accessed)/TANH_THETA))
+            T = 1 - 2 / ((2/(1-T)-1) * math.exp(-2*(last_accessed - block.last_accessed)/TANH_THETA) + 1)
             block.total_count = (H + T, math.tanh(TANH_DELTA / TANH_THETA) * count)
             block.last_accessed = last_accessed
             self.heap.insert(block.total_count[0], block.total_count[1], block.last_accessed, block_id, block.num_hashed_tokens)
@@ -334,7 +334,7 @@ class WeightEvictor(Evictor):
             self.heap.erase(block.total_count[0], block.total_count[1], self.delta(block.num_hashed_tokens), block.last_accessed, block_id)
             H, T = block.total_count
             H *= math.exp(-(last_accessed - block.last_accessed) / TANH_THETA)
-            T = 1-2/(1+(1+T)/(1-T)*math.exp(-2*(last_accessed - block.last_accessed)/TANH_THETA))
+            T = 1 - 2 / ((2/(1-T)-1) * math.exp(-2*(last_accessed - block.last_accessed)/TANH_THETA) + 1)
             block.total_count = (H + T, math.tanh(TANH_DELTA / TANH_THETA) * count)
             block.last_accessed = last_accessed 
             self.heap.insert(block.total_count[0], block.total_count[1], self.delta(block.num_hashed_tokens), last_accessed, block_id) 
@@ -372,14 +372,16 @@ def make_evictor(eviction_policy: EvictionPolicy) -> Evictor:
         c = 16.975203511045493
         k = 0.00043533405552524906
         if USE_TANH:
+            print("evictor:MWF_TANH")
             from vllm.core.block.common import TANH_DELTA, TANH_THETA
-            return WeightEvictor(TANH_DELTA, TANH_THETA, lambda x: k * x + c)
+            return WeightEvictor(TANH_DELTA, lambda x: k * x + c, TANH_THETA)
         else:
             return WeightEvictor(BASE_FREQ, lambda x: k * x + c)
     elif eviction_policy == EvictionPolicy.LFU:
         from vllm.core.block.common import BASE_FREQ, USE_TANH
         print("evictor:LFU")
         if USE_TANH:
+            print("evictor:LFU_TANH")
             from vllm.core.block.common import TANH_DELTA, TANH_THETA
             return LFUEvictor(TANH_DELTA, TANH_THETA)
         else:

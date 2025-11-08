@@ -605,7 +605,7 @@ class PrefixCachingBlockAllocator(BlockAllocator):
                     H, T = self._block_tracker[block_id].total_count
                     last = self._block_tracker[block_id].last_accessed
                     H *= math.exp(-(now - last) / TANH_THETA)
-                    T = 1-2/(1+(1+T)/(1-T)*math.exp(-2*(now-last)/TANH_THETA))
+                    T = 1 - 2 / ((2/(1-T)-1) * math.exp(-2*(now - last)/TANH_THETA) + 1)
                     self._block_tracker[block_id].total_count = (H + T, math.tanh(TANH_DELTA / TANH_THETA))
                 else:
                     self._block_tracker[block_id].total_count *= BASE_FREQ ** (now - self._block_tracker[block_id].last_accessed)

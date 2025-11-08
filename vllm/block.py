@@ -78,7 +78,7 @@ class PhysicalTokenBlock:
                 H, T = self.total_count
                 last = self.last_accessed
                 H *= math.exp(-(now - last) / TANH_THETA)
-                T = 1-2/(1+(1+T)/(1-T)*math.exp(-2*(now-last)/TANH_THETA))
+                T = 1 - 2 / ((2/(1-T)-1) * math.exp(-2*(now - last)/TANH_THETA) + 1)
                 self.total_count = (H + T, math.tanh(TANH_DELTA / TANH_THETA) * count)
             else:
                 self.total_count *= BASE_FREQ ** (now - self.last_accessed)
@@ -90,9 +90,8 @@ class PhysicalTokenBlock:
             last = self.last_accessed
             if now is None:
                 return H + T
-            tmp = math.exp(-2 * (now - self.last_accessed) / TANH_THETA)
             return H * math.exp(-(now - last) / TANH_THETA) + \
-                    1-2/(1+(1+T)/(1-T)*math.exp(-2*(now-last)/TANH_THETA))
+                    1 - 2 / ((2/(1-T)-1) * math.exp(-2*(now - last)/TANH_THETA) + 1)
         else:
             return self.total_count * \
                 (1 if now is None else BASE_FREQ ** (now - self.last_accessed))
