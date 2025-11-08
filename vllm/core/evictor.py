@@ -241,8 +241,8 @@ class LFUEvictor(Evictor):
             self.heap.erase(block.total_count[0], block.total_count[1], block.last_accessed, block_id, block.num_hashed_tokens)
             H, T = block.total_count
             H *= math.exp(-(last_accessed - block.last_accessed) / TANH_THETA)
-            T = 1 - 2 / ((2/(1-T)-1) * math.exp(-2*(last_accessed - block.last_accessed)/TANH_THETA) + 1)
-            block.total_count = (H + T, math.tanh(TANH_DELTA / TANH_THETA) * count)
+            T = 1 - 1 / ((1/(1-T)-1) * math.exp(-2*(last_accessed - block.last_accessed)/TANH_THETA) + 1)
+            block.total_count = (H + T, (1-1/(math.exp(2*TANH_DELTA/TANH_THETA)+1)) * count)
             block.last_accessed = last_accessed
             self.heap.insert(block.total_count[0], block.total_count[1], block.last_accessed, block_id, block.num_hashed_tokens)
         else:
@@ -334,9 +334,9 @@ class WeightEvictor(Evictor):
             self.heap.erase(block.total_count[0], block.total_count[1], self.delta(block.num_hashed_tokens), block.last_accessed, block_id)
             H, T = block.total_count
             H *= math.exp(-(last_accessed - block.last_accessed) / TANH_THETA)
-            T = 1 - 2 / ((2/(1-T)-1) * math.exp(-2*(last_accessed - block.last_accessed)/TANH_THETA) + 1)
-            block.total_count = (H + T, math.tanh(TANH_DELTA / TANH_THETA) * count)
-            block.last_accessed = last_accessed 
+            T = 1 - 1 / ((1/(1-T)-1) * math.exp(-2*(last_accessed - block.last_accessed)/TANH_THETA) + 1)
+            block.total_count = (H + T, (1-1/(math.exp(2*TANH_DELTA/TANH_THETA)+1)) * count)
+            block.last_accessed = last_accessed
             self.heap.insert(block.total_count[0], block.total_count[1], self.delta(block.num_hashed_tokens), last_accessed, block_id) 
         else:
             self.heap.erase(block.total_count * self.delta(block.num_hashed_tokens), block.last_accessed, block_id)
