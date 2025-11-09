@@ -9,15 +9,14 @@ export VLLM_ALLOW_DEPRECATED_BLOCK_MANAGER_V1=1
 export TRANSFORMERS_OFFLINE=1
 export VLLM_USE_V1=0
 export VLLM_USE_POD_ATTN=1
-export VLLM_SCHEDULE_ONE_PREFILL=1
-export HALF_LIFE=5000
-export VLLM_EVICTOR_POLICY=mwf
-export VLLM_LOGGING_LEVEL=DEBUG
+# export VLLM_SCHEDULE_ONE_PREFILL=1
+export HALF_LIFE=40
+export VLLM_EVICTOR_POLICY=lru
+export VLLM_LOGGING_LEVEL=INFO
 # export CUDA_LAUNCH_BLOCKING=1
 export HF_ENDPOINT=https://hf-mirror.com
 export NCCL_ALGO=Ring
-export CSET_DIR='../../../csrc/c_set/'
-# install quart first -- required for disagg prefill proxy serve
+export CSET_DIR=/jizhicfs/marvinhjia/sca/yilin/vllm-dev/csrc/c_set
 if python -c "import quart" &> /dev/null; then
     echo "Quart is already installed."
 else
@@ -36,7 +35,7 @@ wait_for_server() {
 }
 
 # prefilling instance, which is the KV producer
-CUDA_VISIBLE_DEVICES=0,1,2,3 python \
+CUDA_VISIBLE_DEVICES=0,1,2,3 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm/bin/python3 \
     -m vllm.entrypoints.openai.api_server \
     --model LargeWorldModel/LWM-Text-1M \
     -tp 4 \
@@ -45,9 +44,10 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python \
     --dtype float16 \
     --enable-prefix-caching \
     --enable-chunked-prefill \
-    --max-model-len 524288 \
+    --max-model-len 450000 \
     --max_num_batched_tokens 8192 \
-    --gpu-memory-utilization 0.8 &
+    --gpu-memory-utilization 0.8 \
+    > lru_qps0.02_h60_div40_server_output.log &
     # --collect_detailed_traces all \
     # --enforce-eager \
 

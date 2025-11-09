@@ -232,9 +232,9 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
             seq.suffix_computed_block_locs[3] *= self.block_size
             seq.suffix_computed_block_locs[4] = first_compute_start * self.block_size
             
-            logger.info(f"seq: {seq}, "
-                         f"suffix_computed_block_locs: {seq.suffix_computed_block_locs}, "
-                         f"first_compute_start: {first_compute_start * self.block_size}")
+            # logger.info(f"seq: {seq}, "
+            #              f"suffix_computed_block_locs: {seq.suffix_computed_block_locs}, "
+            #              f"first_compute_start: {first_compute_start * self.block_size}")
 
         return block_table
 

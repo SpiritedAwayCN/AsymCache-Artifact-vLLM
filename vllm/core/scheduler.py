@@ -1931,6 +1931,16 @@ class Scheduler:
                 else:
                     seq_group.metrics.scheduler_time = scheduler_time
 
+            is_first_prefill = False
+            if seq_group.is_prefill():
+                seqs = seq_group.get_seqs()
+                num_computed_tokens = seqs[0].data.get_num_computed_tokens()
+                suffix_computed_block_locs = seqs[0].suffix_computed_block_locs.copy()
+                is_first_prefill = num_computed_tokens == 0
+                if is_first_prefill:
+                    seq_group.metrics.suffix_computed_block_locs = suffix_computed_block_locs
+                    seq_group.metrics.first_compute_start = suffix_computed_block_locs[-1]
+
         # Move to next cache (if exists)
         self.cache_id = self.next_cache_id
 
@@ -2370,9 +2380,9 @@ class Scheduler:
             # finishing prefill for this sequence, so we do not need to
             # allocate a full block.
         
-        logger.debug(f"num_new_tokens before chunking: {num_new_tokens}, "
-                    f"remaining_token_budget: {remaining_token_budget}, "
-                    f"prefill_slot_budget: {prefill_slot_budget}")
+        # logger.debug(f"num_new_tokens before chunking: {num_new_tokens}, "
+        #             f"remaining_token_budget: {remaining_token_budget}, "
+        #             f"prefill_slot_budget: {prefill_slot_budget}")
         
         num_new_tokens = min(num_new_tokens, remaining_token_budget,
                              prefill_slot_budget)

@@ -31,55 +31,52 @@ for fn in sorted(os.listdir(log_dir)):
     policy = mfn.group("policy").lower()
     key = (policy, div, half_time)
     path = os.path.join(log_dir, fn)
-
-    try:
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                mo = line_pattern.search(line)
-                if not mo:
-                    continue
-                
-                num_blocks = int(mo.group(1))
-                s0, s1, s2, s3 = int(mo.group(2)), int(mo.group(3)), int(mo.group(4)), int(mo.group(5))
-                first_compute_start = int(mo.group(6))
-                
-                agg[key]["total_matches"] += 1
-                
-                hit_blocks = 0
-                if s1 > s0:
-                    hit_blocks += (s1 - s0) // 64
-                if s3 > s2:
-                    hit_blocks += (s3 - s2) // 64
-                if first_compute_start > 0:
-                    hit_blocks += first_compute_start // 64
-                hit_rate = hit_blocks / num_blocks if num_blocks > 0 else 0.0
-                agg[key]["total_hit_rate"] += hit_rate
-
-                # 优先判三段 -> 两段 -> 单段
-                if s2 != 0:
-                    if s0 != 0 and first_compute_start != 0:
-                        agg[key]["true_triple_count"] += 1
-                        # print(s0, s1, s2, s3)
-                        # assert 0
-                    else:
-                        agg[key]["false_triple_count"] += 1
+    if div <= 320 and half_time <= 100:
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    mo = line_pattern.search(line)
+                    if not mo:
+                        continue
                     
-                elif s0 != 0:
-                    if first_compute_start != 0:
-                        agg[key]["true_double_count"] += 1
-                    else:
-                        agg[key]["false_double_count"] += 1
-
-                else:
-                    if first_compute_start != 0:
-                        agg[key]["single_count"] += 1
-
-                if (s1-s0 == 64) or (s3-s2 == 64):
-                    agg[key]["one_blocksize"] += 1
+                    num_blocks = int(mo.group(1))
+                    s0, s1, s2, s3 = int(mo.group(2)), int(mo.group(3)), int(mo.group(4)), int(mo.group(5))
+                    first_compute_start = int(mo.group(6))
+                    
+                    agg[key]["total_matches"] += 1
+                    
+                    hit_blocks = 0
+                    if s1 > s0:
+                        hit_blocks += (s1 - s0) // 64
+                    if s3 > s2:
+                        hit_blocks += (s3 - s2) // 64
+                    if first_compute_start > 0:
+                        hit_blocks += first_compute_start // 64
+                    hit_rate = hit_blocks / num_blocks if num_blocks > 0 else 0.0
+                    agg[key]["total_hit_rate"] += hit_rate
+                    # 优先判三段 -> 两段 -> 单段
+                    if s2 != 0:
+                        if s0 != 0 and first_compute_start != 0:
+                            agg[key]["true_triple_count"] += 1
+                            # print(s0, s1, s2, s3)
+                            # assert 0
+                        else:
+                            agg[key]["false_triple_count"] += 1
                         
-    except Exception as e:
-        print(f"读取文件失败 {path}: {e}")
-        continue
+                    elif s0 != 0:
+                        if first_compute_start != 0:
+                            agg[key]["true_double_count"] += 1
+                        else:
+                            agg[key]["false_double_count"] += 1
+                    else:
+                        if first_compute_start != 0:
+                            agg[key]["single_count"] += 1
+                    if (s1-s0 == 64) or (s3-s2 == 64):
+                        agg[key]["one_blocksize"] += 1
+         
+        except Exception as e:
+            print(f"读取文件失败 {path}: {e}")
+            continue
 
 with open(out_csv, "w", newline="", encoding="utf-8") as csvf:
     writer = csv.writer(csvf)

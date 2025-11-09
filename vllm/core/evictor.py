@@ -323,8 +323,8 @@ def make_evictor(eviction_policy: EvictionPolicy) -> Evictor:
         return LRUEvictor()
     elif eviction_policy == EvictionPolicy.MWF:
         from vllm.core.block.common import BASE_FREQ
-        c = 16.975203511045493
-        k = 0.00043533405552524906
+        c = 1.8544166376320397
+        k = 7.411805757842883e-05
         return WeightEvictor(BASE_FREQ, lambda x: k * x + c)
     elif eviction_policy == EvictionPolicy.LFU:
         from vllm.core.block.common import BASE_FREQ

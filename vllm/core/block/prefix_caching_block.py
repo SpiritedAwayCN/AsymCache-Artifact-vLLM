@@ -1190,7 +1190,7 @@ class ComputedBlocksTracker:
                 # If the sequence does not have suffix_computed_block_locs,
                 # we generate it here.
                 self._seq_id_to_num_tokens_computed[seq.seq_id], seq.suffix_computed_block_locs = self._allocator.find_cached_blocks_multiseg(block_hashes)
-                logger.debug(f"seq_id {seq.seq_id} has suffix_computed_block_locs {seq.suffix_computed_block_locs}, first_compute_start {self._seq_id_to_num_tokens_computed[seq.seq_id]}")
+                # logger.debug(f"seq_id {seq.seq_id} has suffix_computed_block_locs {seq.suffix_computed_block_locs}, first_compute_start {self._seq_id_to_num_tokens_computed[seq.seq_id]}")
             
             if firstseg_only:
                 return seq.suffix_computed_block_locs[4]

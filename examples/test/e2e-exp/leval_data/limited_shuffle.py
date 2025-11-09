@@ -3,12 +3,12 @@ import pandas as pd
 import os
 import argparse
 
-BASE_DIR = './'
+BASE_DIR = '/jizhicfs/marvinhjia/sca/data_preprocess'
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--div', type=int, default=80)
+parser.add_argument('--div', type=int, default=160)
 parser.add_argument('--seed', type=int, default=42)
-parser.add_argument('--qps', type=float, default=0.5)
+parser.add_argument('--qps', type=float, default=1.0)
 args = parser.parse_args()
 
 def shuffle_array_within_k(array, K, seed=None):
@@ -26,7 +26,7 @@ def shuffle_array_within_k(array, K, seed=None):
     shuffled_arr = [elem for index, elem in indexed_arr]
     return shuffled_arr
 
-df = pd.read_csv(os.path.join(BASE_DIR, 'seqlen_stat_LEval.csv'))
+df = pd.read_csv(os.path.join(BASE_DIR, 'four_seqlen_stat_LEval.csv'))
 index_list = list(range(len(df)))
 index_list = shuffle_array_within_k(index_list, args.div, seed=args.seed)
 
