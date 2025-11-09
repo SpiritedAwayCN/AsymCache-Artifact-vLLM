@@ -17,6 +17,21 @@ except Exception:
     HALF_LIFE = 100
 BASE_FREQ: float = 0.5**(1/HALF_LIFE)
 
+_use_tanh = os.environ.get('USE_TANH', 'None') == '1'
+_tanh_delta = os.environ.get('TANH_DELTA', 10)
+_tanh_theta = os.environ.get('TANH_THETA', 1)
+USE_TANH = False
+if _use_tanh:
+    try:
+        TANH_DELTA = float(_tanh_delta)
+    except:
+        TANH_DELTA = 10
+    try:
+        TANH_THETA = float(_tanh_theta)
+    except:
+        TANH_THETA = 1
+    USE_TANH = True
+
 class RefCounterProtocol(Protocol):
 
     def incr(self, block_id: BlockId) -> RefCount:
