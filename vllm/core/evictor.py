@@ -312,8 +312,8 @@ class WeightEvictor(Evictor):
             raise ValueError("No usable cache memory left")
 
         evicted_id = self.heap.pop_first()
-        if evicted_id == 3705:
-            logger.info(f"block_id 3705 evicted.")
+        # if evicted_id == 3705:
+        #     logger.info(f"block_id 3705 evicted.")
         evicted_block = self.free_table.pop(evicted_id)
         if not self._has_evicted:
             self._has_evicted = True
@@ -329,8 +329,8 @@ class WeightEvictor(Evictor):
             self.heap.insert(val, last_accessed, block_id)
         else:
             val = self.delta(num_hashed_tokens)
-            if block_id == 3705:
-                logger.info(f"block_id 3705 added, {(total_count[0], total_count[1], val, last_accessed, block_id)}.")
+            # if block_id == 3705:
+            #     logger.info(f"block_id 3705 added, {(total_count[0], total_count[1], val, last_accessed, block_id)}.")
             self.heap.insert(total_count[0], total_count[1], val, last_accessed, block_id)
         
         self.free_table[block_id] = BlockMetaData(
@@ -363,8 +363,8 @@ class WeightEvictor(Evictor):
         if block_id not in self.free_table:
             raise ValueError(
                 "Attempting to remove block that's not in the evictor")
-        if block_id == 3705:
-            logger.info("block_id 3705 removed.")
+        # if block_id == 3705:
+        #     logger.info("block_id 3705 removed.")
         block = self.free_table.pop(block_id)
         if self.base2 is None:
             self.heap.erase(block.func, block.last_accessed, block_id)
