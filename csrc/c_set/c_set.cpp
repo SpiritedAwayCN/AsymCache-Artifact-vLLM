@@ -3,6 +3,7 @@
 #include <set>
 #include <cstdio>
 #include <string>
+#include <iostream>
 #include <sstream>
 #include <stdexcept>
 namespace py = pybind11;
@@ -110,15 +111,19 @@ struct ItemTanh {
     bool operator <(const ItemTanh &rhs) const {
         auto h1 = w1, t1 = w2, p = h1 + t1;
         auto h2 = rhs.w1, t2 = rhs.w2, q = h2 + t2;
-        if (last_accessed < rhs.last_accessed) {
+        if (last_accessed != rhs.last_accessed) {
             h1 *= exp(-(rhs.last_accessed - last_accessed) / constant::TANH_THETA);
             t1 = 1 - 1 / ((1/(1-t1)-1) * exp(-2*(rhs.last_accessed - last_accessed)/constant::TANH_THETA) + 1);
             p = h1 + t1;
-        } else {
-            h2 *= exp(-(last_accessed - rhs.last_accessed) / constant::TANH_THETA);
-            t2 = 1 - 1 / ((1/(1-t2)-1) * exp(-2*(last_accessed - rhs.last_accessed)/constant::TANH_THETA) + 1);
-            q = h2 + t2;
         }
+
+        // if (last_accessed < rhs.last_accessed) {
+            
+        // } else {
+        //     h2 *= exp(-(last_accessed - rhs.last_accessed) / constant::TANH_THETA);
+        //     t2 = 1 - 1 / ((1/(1-t2)-1) * exp(-2*(last_accessed - rhs.last_accessed)/constant::TANH_THETA) + 1);
+        //     q = h2 + t2;
+        // }
         p *= func;
         q *= rhs.func;
         return p<q-constant::epsilon || (p<q+constant::epsilon && hash < rhs.hash);
@@ -160,7 +165,17 @@ public:
     }
     void erase(T1 w1, T1 w2, T1 func, T1 last_accessed, T3 hash) {
         auto it = s.find({w1, w2, func, last_accessed, hash});
-        if (it != s.end()) s.erase(it);
+        if (it != s.end()) 
+            s.erase(it);
+        else{
+            std::ostringstream oss;
+            oss << "Item not found: " << w1 << " " << w2 << " " << func << " " << last_accessed << " " << hash;
+            // print all entries in this container
+            // for (const auto& item : s) {
+            //     std::cout << "Existing item: " << item.w1 << " " << item.w2 << " " << item.func << " " << item.last_accessed << " " << item.hash << std::endl;
+            // }
+            throw std::runtime_error(oss.str());
+        }
     }
     T3 pop_first() {
         if (!s.empty()) {

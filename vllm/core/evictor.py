@@ -2,6 +2,7 @@
 
 import enum
 import heapq
+import math
 from abc import ABC, abstractmethod
 from typing import Dict, List, Tuple, Optional, Union
 from vllm.logger import init_logger
@@ -68,7 +69,8 @@ class BlockMetaData:
     """
 
     def __init__(self, content_hash: int, num_hashed_tokens: int,
-                 last_accessed: float, total_count: Optional[Union[float, Tuple[float, float]]] = None):
+                 last_accessed: float, total_count: Optional[Union[float, Tuple[float, float]]] = None,
+                 func: Optional[float] = None):
         self.content_hash = content_hash
         self.num_hashed_tokens = num_hashed_tokens
         self.last_accessed = last_accessed
@@ -77,11 +79,13 @@ class BlockMetaData:
             self.total_count = (0, 0) if USE_TANH else 0
         else:
             self.total_count = total_count
+        self.func = func if func is not None else 0
     def __repr__(self) -> str:
         return (f'BlockMetaData,'
                 f'num_hashed_tokens={self.num_hashed_tokens}, '
                 f'last_accessed={self.last_accessed}, '
-                f'total_count={self.total_count}')
+                f'total_count={self.total_count}, '
+                f'func={self.func}')
 
 class LRUEvictor(Evictor):
     """Evicts in a least-recently-used order using the last_accessed timestamp
@@ -308,6 +312,8 @@ class WeightEvictor(Evictor):
             raise ValueError("No usable cache memory left")
 
         evicted_id = self.heap.pop_first()
+        if evicted_id == 3705:
+            logger.info(f"block_id 3705 evicted.")
         evicted_block = self.free_table.pop(evicted_id)
         if not self._has_evicted:
             self._has_evicted = True
@@ -317,12 +323,18 @@ class WeightEvictor(Evictor):
     def add(self, block_id: int, content_hash: int, num_hashed_tokens: int,
             last_accessed: float, total_count: Optional[Union[float, Tuple[float, float]]] = None):
         """Adds block to the evictor, making it a candidate for eviction"""
-        self.free_table[block_id] = BlockMetaData(
-            content_hash, num_hashed_tokens, last_accessed, total_count)
+        # assert block_id not in self.free_table, f"Block {block_id} already in evictor"
         if self.base2 is None:
-            self.heap.insert(total_count * self.delta(num_hashed_tokens), last_accessed, block_id)
+            val = total_count * self.delta(num_hashed_tokens)
+            self.heap.insert(val, last_accessed, block_id)
         else:
-            self.heap.insert(total_count[0], total_count[1], self.delta(num_hashed_tokens), last_accessed, block_id)
+            val = self.delta(num_hashed_tokens)
+            if block_id == 3705:
+                logger.info(f"block_id 3705 added, {(total_count[0], total_count[1], val, last_accessed, block_id)}.")
+            self.heap.insert(total_count[0], total_count[1], val, last_accessed, block_id)
+        
+        self.free_table[block_id] = BlockMetaData(
+            content_hash, num_hashed_tokens, last_accessed, total_count, val)
 
     def update(self, block_id: int, last_accessed: float):
         """Update corresponding block's access time in metadata"""
@@ -351,11 +363,13 @@ class WeightEvictor(Evictor):
         if block_id not in self.free_table:
             raise ValueError(
                 "Attempting to remove block that's not in the evictor")
+        if block_id == 3705:
+            logger.info("block_id 3705 removed.")
         block = self.free_table.pop(block_id)
         if self.base2 is None:
-            self.heap.erase(block.total_count * self.delta(block.num_hashed_tokens), block.last_accessed, block_id)
+            self.heap.erase(block.func, block.last_accessed, block_id)
         else:
-            self.heap.erase(block.total_count[0], block.total_count[1], self.delta(block.num_hashed_tokens), block.last_accessed, block_id)
+            self.heap.erase(block.total_count[0], block.total_count[1], block.func, block.last_accessed, block_id)
 
         return block
 
