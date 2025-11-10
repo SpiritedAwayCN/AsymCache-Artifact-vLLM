@@ -13,7 +13,7 @@ from vllm.entrypoints.chat_utils import (apply_hf_chat_template, parse_chat_mess
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--policy', '-p', type=str, choices=['mwf', 'lru', 'lfu'], default='mwf')
-parser.add_argument('--div', '-d', type=int, default=20)
+parser.add_argument('--div', '-d', type=int, default=40)
 parser.add_argument('--seed', '-s', type=int, default=0)
 parser.add_argument('--qps', '-q', type=float, default=1)
 arg = parser.parse_args()
@@ -29,10 +29,7 @@ else:
 
 TP = 4
 block_size = 64
-
-# model = "LargeWorldModel/LWM-Text-1M"
-model = "meta-llama/Llama-3.1-70B-Instruct"
-# TP -> num_blocks (with block_size=64)
+model = "LargeWorldModel/LWM-Text-1M"
 params_dict = {4 : {'num_gpu_blocks': 7931, 'num_cpu_blocks': 819}, 8 : {'num_gpu_blocks': 21978, 'num_cpu_blocks': 1638}}
 
 block_manager = SelfAttnBlockSpaceManager(
@@ -143,7 +140,7 @@ if __name__ == '__main__':
         chat_template = file.read()
     
     BASE_DIR = '/jizhicfs/marvinhjia/sca'
-    df = pd.read_csv(f'{BASE_DIR}/data_preprocess/four_seqlen_stat_LEval.csv')
+    df = pd.read_csv(f'{BASE_DIR}/data_preprocess/seqlen_stat_Longbench.csv')
     
     index_list = list(range(len(df)))
     if arg.div >= 0:
@@ -154,7 +151,7 @@ if __name__ == '__main__':
     
     datasets = {}
     
-    for jsonl_file in glob.glob(f"{BASE_DIR}/Four-LEval-data/**/*.jsonl", recursive=True):
+    for jsonl_file in glob.glob(f"{BASE_DIR}/Longbench/*.jsonl", recursive=True):
         with open(jsonl_file, 'r', encoding='utf-8') as file:
             for line_number, line in enumerate(file):
                 data = json.loads(line)
