@@ -7,20 +7,35 @@ from vllm.sequence import Sequence, SequenceGroup
 import os
 import math
 
-_use_tanh = os.environ.get('USE_TANH', 'None') == '1'
-_tanh_delta = os.environ.get('TANH_DELTA', 10)
-_tanh_theta = os.environ.get('TANH_THETA', 1)
-USE_TANH = False
-if _use_tanh:
+_use_minexp = os.environ.get('USE_MINEXP', 'None') == '1'
+_minexp_A = os.environ.get('MINEXP_A', 10)
+_minexp_alpha = os.environ.get('MINEXP_ALPHA', 1)
+_minexp_B = os.environ.get('MINEXP_B', 10)
+_minexp_beta = os.environ.get('MINEXP_BETA', 1)
+
+USE_MINEXP = False
+if _use_minexp:
+    USE_MINEXP = True
     try:
-        TANH_DELTA = float(_tanh_delta)
+        MINEXP_ALPHA = float(_minexp_alpha)
     except:
-        TANH_DELTA = 10
+        MINEXP_ALPHA = 1
     try:
-        TANH_THETA = float(_tanh_theta)
+        MINEXP_BETA = float(_minexp_beta)
     except:
-        TANH_THETA = 1
-    USE_TANH = True
+        MINEXP_BETA = 1
+    try:
+        MINEXP_A = float(_minexp_A)
+    except:
+        MINEXP_A = 10
+    try:
+        MINEXP_B = float(_minexp_B)
+    except:
+        MINEXP_B = 10
+    MINEXP_ALPHA = math.exp(-1 / MINEXP_ALPHA)
+    MINEXP_A = MINEXP_ALPHA ** MINEXP_A
+    MINEXP_BETA = math.exp(-1 / MINEXP_BETA)
+    MINEXP_B = MINEXP_BETA ** MINEXP_B
 
 _half_life = os.environ.get('HALF_LIFE', 10)
 try:
@@ -52,7 +67,7 @@ class PhysicalTokenBlock:
         self.ref_count = 0
         self.last_accessed = DEFAULT_LAST_ACCESSED_TIME
         # self.ref_seqs: Set[Sequence] = set()
-        if USE_TANH:
+        if USE_MINEXP:
             self.total_count = (0, 0)
         else:
             self.total_count = 0
@@ -74,24 +89,24 @@ class PhysicalTokenBlock:
     
     def add_total_count(self, count: int, now: float):
         if self.last_accessed != DEFAULT_LAST_ACCESSED_TIME:
-            if self.USE_TANH:
-                H, T = self.total_count
-                last = self.last_accessed
-                H *= math.exp(-(now - last) / TANH_THETA)
-                T = 1 - 1 / ((1/(1-T)-1) * math.exp(-2*(now - last)/TANH_THETA) + 1)
-                self.total_count = (H + T, (1-1/(math.exp(2*TANH_DELTA/TANH_THETA)+1)) * count)
+            if self.USE_MINEXP:
+                exp1, exp2 = self.total_count
+                exp1 *= MINEXP_ALPHA ** (now - self.last_accessed)
+                exp1 += MINEXP_A
+                exp2 *= MINEXP_BETA ** (now - self.last_accessed)
+                exp2 += MINEXP_B
+                self.total_count = (exp1, exp2)
             else:
                 self.total_count *= BASE_FREQ ** (now - self.last_accessed)
                 self.total_count += count
     
     def get_total_count(self, now: Optional[float] = None) -> float:
-        if self.USE_TANH:
-            H, T = self.total_count
-            last = self.last_accessed
+        if self.USE_MINEXP:
+            exp1, exp2 = self.total_count
             if now is None:
-                return H + T
-            return H * math.exp(-(now - last) / TANH_THETA) + \
-                    1 - 1 / ((1/(1-T)-1) * math.exp(-2*(now - last)/TANH_THETA) + 1)
+                return min(self.total_count)
+            d = now - self.last_accessed
+            return min(exp1 * (MINEXP_ALPHA ** d), exp2 * (MINEXP_BETA ** d))
         else:
             return self.total_count * \
                 (1 if now is None else BASE_FREQ ** (now - self.last_accessed))
