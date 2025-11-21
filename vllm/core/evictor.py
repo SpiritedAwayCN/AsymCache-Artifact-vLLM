@@ -2,6 +2,7 @@
 
 import enum
 import heapq
+import math
 from abc import ABC, abstractmethod
 from typing import Dict, List, Tuple, Optional, Union
 from vllm.logger import init_logger
@@ -68,20 +69,23 @@ class BlockMetaData:
     """
 
     def __init__(self, content_hash: int, num_hashed_tokens: int,
-                 last_accessed: float, total_count: Optional[Union[float, Tuple[float, float]]] = None):
+                 last_accessed: float, total_count: Optional[Union[float, Tuple[float, float]]] = None,
+                 func: Optional[float] = None):
         self.content_hash = content_hash
         self.num_hashed_tokens = num_hashed_tokens
         self.last_accessed = last_accessed
         if total_count is None:
-            from vllm.core.block.common import USE_TANH
-            self.total_count = (0, 0) if USE_TANH else 0
+            from vllm.core.block.common import USE_MINEXP
+            self.total_count = (0, 0) if USE_MINEXP else 0
         else:
             self.total_count = total_count
+        self.func = func if func is not None else 0
     def __repr__(self) -> str:
         return (f'BlockMetaData,'
                 f'num_hashed_tokens={self.num_hashed_tokens}, '
                 f'last_accessed={self.last_accessed}, '
-                f'total_count={self.total_count}')
+                f'total_count={self.total_count}, '
+                f'func={self.func}')
 
 class LRUEvictor(Evictor):
     """Evicts in a least-recently-used order using the last_accessed timestamp
@@ -179,32 +183,47 @@ class LRUEvictor(Evictor):
 
 class LFUEvictor(Evictor):
     
-    def __init__(self, base, base2: Optional[float] = None):
-        logger.info(f"{self.__class__.__name__} is used, base is {base}.")
-        # block_hash ---> (block, weight)
-        self.free_table: Dict[int, BlockMetaData] = dict()
-        self.base = base
-        self.base2 = base2
-        import sys
-        import os
-        module_directory = os.environ.get("CSET_DIR", None)
-        if not os.path.exists(module_directory):
-            raise FileNotFoundError(f"Module directory {module_directory} not found!")
-        sys.path.append(module_directory)
-        if base2 is not None:
-            # use tanh
-            try:
-                from c_set import c_set_lfu_tanh
-            except ImportError as e:
-                raise ImportError(f"Failed to import 'c_set_lfu_tanh' from {module_directory}: {e}")
-            self.heap = c_set_lfu_tanh(base, base2)
-        else:
+    def __init__(self, param1, param2 = None, param3 = None, param4 = None):
+        if param2 is None:
+            logger.info(f"{self.__class__.__name__} is used, base is {param1}.")
+            # block_hash ---> (block, weight)
+            self.free_table: Dict[int, BlockMetaData] = dict()
+            self.USE_MINEXP = False
+            self.base = param1
+            import sys
+            import os
+            module_directory = os.environ.get("CSET_DIR", None)
+            if not os.path.exists(module_directory):
+                raise FileNotFoundError(f"Module directory {module_directory} not found!")
+            sys.path.append(module_directory)
             try:
                 from c_set import c_set_lfu  # 导入 c_set_lfu 模块
             except ImportError as e:
                 raise ImportError(f"Failed to import 'c_set_lfu' from {module_directory}: {e}")
-            self.heap = c_set_lfu(base)
-        self._has_evicted = False
+            self.heap = c_set_lfu(self.base)
+            self._has_evicted = False
+        else:
+            logger.info(f"{self.__class__.__name__}_minexp<{param1}, {param2}, {param3}, {param4}> is used")
+            # block_hash ---> (block, weight)
+            self.free_table: Dict[int, BlockMetaData] = dict()
+            self.USE_MINEXP = True
+            self.MINEXP_A = param1
+            self.MINEXP_B = param2
+            self.MINEXP_ALPHA = param3
+            self.MINEXP_BETA = param4
+            import sys
+            import os
+            module_directory = os.environ.get("CSET_DIR", None)
+            if not os.path.exists(module_directory):
+                raise FileNotFoundError(f"Module directory {module_directory} not found!")
+            sys.path.append(module_directory)
+            try:
+                from c_set import c_set_lfu  # 导入 c_set_lfu 模块
+            except ImportError as e:
+                raise ImportError(f"Failed to import 'c_set_lfu' from {module_directory}: {e}")
+            self.heap1 = c_set_lfu(self.MINEXP_ALPHA)
+            self.heap2 = c_set_lfu(self.MINEXP_BETA)
+            self._has_evicted = False
 
     def __contains__(self, block_id: int) -> bool:
         return block_id in self.free_table
@@ -212,12 +231,27 @@ class LFUEvictor(Evictor):
     def evict(self) -> Tuple[int, int]:
         if len(self.free_table) == 0:
             raise ValueError("No usable cache memory left")
-
-        # logger.info(f"evicting, heap size = {self.heap.size()}")
-        evicted_id = self.heap.pop_first()
-        # block = self.free_table[evicted_id]
-        # print(f"evict:{block.total_count}")
-        evicted_block = self.free_table.pop(evicted_id)
+        if not self.USE_MINEXP:
+            # logger.info(f"evicting, heap size = {self.heap.size()}")
+            evicted_id = self.heap.pop_first()
+            # block = self.free_table[evicted_id]
+            # print(f"evict:{block.total_count}")
+            evicted_block = self.free_table.pop(evicted_id)
+        else:
+            weight1, last_accessed1 = self.heap1.first()
+            weight2, last_accessed2 = self.heap2.first()
+            if last_accessed1 < last_accessed2:
+                weight1 *= self.MINEXP_ALPHA ** (last_accessed2 - last_accessed1)
+            else:
+                weight2 *= self.MINEXP_BETA ** (last_accessed1 - last_accessed2)
+            if weight1 < weight2:
+                evicted_id = self.heap1.pop_first()
+                evicted_block = self.free_table.pop(evicted_id)
+                self.heap2.erase(evicted_block.total_count[1], evicted_block.last_accessed, evicted_id, evicted_block.num_hashed_tokens)
+            else:
+                evicted_id = self.heap2.pop_first()
+                evicted_block = self.free_table.pop(evicted_id)
+                self.heap1.erase(evicted_block.total_count[0], evicted_block.last_accessed, evicted_id, evicted_block.num_hashed_tokens)
         if not self._has_evicted:
             self._has_evicted = True
             logger.info(f"First eviction, heap size = {len(self.free_table)}")
@@ -227,8 +261,9 @@ class LFUEvictor(Evictor):
             last_accessed: float, total_count: Optional[Union[float, Tuple[float, float]]] = None):
         self.free_table[block_id] = BlockMetaData(
             content_hash, num_hashed_tokens, last_accessed, total_count)
-        if isinstance(total_count, tuple):
-            self.heap.insert(total_count[0], total_count[1], last_accessed, block_id, num_hashed_tokens)
+        if self.USE_MINEXP:
+            self.heap1.insert(total_count[0], last_accessed, block_id, num_hashed_tokens)
+            self.heap2.insert(total_count[1], last_accessed, block_id, num_hashed_tokens)
         else:
             self.heap.insert(total_count, last_accessed, block_id, num_hashed_tokens)
 
@@ -237,14 +272,18 @@ class LFUEvictor(Evictor):
         block = self.free_table.get(block_id)
         if block is None:
             raise ValueError(f"Block {block_id} not found in free_table")
-        if isinstance(block.total_count, tuple):
-            self.heap.erase(block.total_count[0], block.total_count[1], block.last_accessed, block_id, block.num_hashed_tokens)
-            H, T = block.total_count
-            H *= math.exp(-(last_accessed - block.last_accessed) / TANH_THETA)
-            T = 1 - 1 / ((1/(1-T)-1) * math.exp(-2*(last_accessed - block.last_accessed)/TANH_THETA) + 1)
-            block.total_count = (H + T, (1-1/(math.exp(2*TANH_DELTA/TANH_THETA)+1)) * count)
+        if self.USE_MINEXP:
+            self.heap1.erase(block.total_count[0], block.last_accessed, block_id, block.num_hashed_tokens)
+            self.heap2.erase(block.total_count[1], block.last_accessed, block_id, block.num_hashed_tokens)
+            exp1, exp2 = block.total_count
+            exp1 *= self.MINEXP_ALPHA ** (now - self.last_accessed)
+            exp1 += self.MINEXP_A
+            exp2 *= self.MINEXP_BETA ** (now - self.last_accessed)
+            exp2 += self.MINEXP_B
+            block.total_count = (exp1, exp2)
             block.last_accessed = last_accessed
-            self.heap.insert(block.total_count[0], block.total_count[1], block.last_accessed, block_id, block.num_hashed_tokens)
+            self.heap1.insert(block.total_count[0], block.last_accessed, block_id, block.num_hashed_tokens)
+            self.heap2.insert(block.total_count[1], block.last_accessed, block_id, block.num_hashed_tokens)
         else:
             self.heap.erase(block.total_count, block.last_accessed, block_id, block.num_hashed_tokens)
             block.total_count *= self.base ** (last_accessed - block.last_accessed)
@@ -259,10 +298,12 @@ class LFUEvictor(Evictor):
             raise ValueError(
                 "Attempting to remove block that's not in the evictor")
         block = self.free_table.pop(block_id)
-        if self.base2 is None:
-            self.heap.erase(block.total_count, block.last_accessed, block_id, block.num_hashed_tokens)
+        if self.USE_MINEXP:
+            self.heap1.erase(block.total_count[0], block.last_accessed, block_id, block.num_hashed_tokens)
+            self.heap2.erase(block.total_count[1], block.last_accessed, block_id, block.num_hashed_tokens)
         else:
-            self.heap.erase(block.total_count[0], block.total_count[1], block.last_accessed, block_id, block.num_hashed_tokens)
+            self.heap.erase(block.total_count, block.last_accessed, block_id, block.num_hashed_tokens)
+
         return block
 
     @property
@@ -273,29 +314,48 @@ class WeightEvictor(Evictor):
     """The Evictor subclasses should be used by the BlockAllocator class to
     handle eviction of freed Blocks.
     """
-    def __init__(self, base, delta_func, base2: Optional[float] = None):
+    def __init__(self, param1, param2, param3 = None, param4 = None, param5 = None):
         # self.delta(len) ---> delta_T
-        self.base = base
-        self.delta = delta_func
-        self.base2 = base2
-        # block_hash ---> (block, weight)
-        self.free_table: Dict[int, BlockMetaData] = dict()
+        if param3 is None:
+            self.base = param1
+            self.delta = param2
+            self.USE_MINEXP = False
+            # block_hash ---> (block, weight)
+            self.free_table: Dict[int, BlockMetaData] = dict()
 
-        import sys
-        import os
-        module_directory = os.environ.get("CSET_DIR", None)
-        if module_directory is None:
-            logger.error("CSET_DIR environment variable not set")
-        else:
-            logger.info(f"Using CSET_DIR: {module_directory}")
-        sys.path.append(module_directory)
-        if base2 is None:
+            import sys
+            import os
+            module_directory = os.environ.get("CSET_DIR", None)
+            if module_directory is None:
+                logger.error("CSET_DIR environment variable not set")
+            else:
+                logger.info(f"Using CSET_DIR: {module_directory}")
+            sys.path.append(module_directory)
             from c_set import c_set
-            self.heap = c_set(base)
+            self.heap = c_set(self.base)
+            self._has_evicted = False
         else:
-            from c_set import c_set_tanh
-            self.heap = c_set_tanh(base, base2)
-        self._has_evicted = False
+            self.MINEXP_A = param1
+            self.MINEXP_B = param2
+            self.MINEXP_ALPHA = param3
+            self.MINEXP_BETA = param4
+            self.delta = param5
+            self.USE_MINEXP = True
+            # block_hash ---> (block, weight)
+            self.free_table: Dict[int, BlockMetaData] = dict()
+
+            import sys
+            import os
+            module_directory = os.environ.get("CSET_DIR", None)
+            if module_directory is None:
+                logger.error("CSET_DIR environment variable not set")
+            else:
+                logger.info(f"Using CSET_DIR: {module_directory}")
+            sys.path.append(module_directory)
+            from c_set import c_set
+            self.heap1 = c_set(self.MINEXP_ALPHA)
+            self.heap2 = c_set(self.MINEXP_BETA)
+            self._has_evicted = False
 
     def __contains__(self, block_id: int) -> bool:
         return block_id in self.free_table
@@ -307,8 +367,27 @@ class WeightEvictor(Evictor):
         if len(self.free_table) == 0:
             raise ValueError("No usable cache memory left")
 
-        evicted_id = self.heap.pop_first()
-        evicted_block = self.free_table.pop(evicted_id)
+        if not self.USE_MINEXP:
+            evicted_id = self.heap.pop_first()
+            evicted_block = self.free_table.pop(evicted_id)
+        else:
+            weight1, last_accessed1 = self.heap1.first()
+            weight2, last_accessed2 = self.heap2.first()
+            if last_accessed1 < last_accessed2:
+                weight1 *= self.MINEXP_ALPHA ** (last_accessed2 - last_accessed1)
+            else:
+                weight2 *= self.MINEXP_BETA ** (last_accessed1 - last_accessed2)
+            if weight1 < weight2:
+                evicted_id = self.heap1.pop_first()
+                evicted_block = self.free_table.pop(evicted_id)
+                self.heap2.erase(evicted_block.total_count[1] * self.delta(evicted_block.num_hashed_tokens), 
+                                 evicted_block.last_accessed, evicted_id)
+            else:
+                evicted_id = self.heap2.pop_first()
+                evicted_block = self.free_table.pop(evicted_id)
+                self.heap1.erase(evicted_block.total_count[0] * self.delta(evicted_block.num_hashed_tokens), 
+                                 evicted_block.last_accessed, evicted_id)
+            
         if not self._has_evicted:
             self._has_evicted = True
             logger.info(f"First eviction, heap size = {len(self.free_table)}")
@@ -317,12 +396,17 @@ class WeightEvictor(Evictor):
     def add(self, block_id: int, content_hash: int, num_hashed_tokens: int,
             last_accessed: float, total_count: Optional[Union[float, Tuple[float, float]]] = None):
         """Adds block to the evictor, making it a candidate for eviction"""
-        self.free_table[block_id] = BlockMetaData(
-            content_hash, num_hashed_tokens, last_accessed, total_count)
-        if self.base2 is None:
-            self.heap.insert(total_count * self.delta(num_hashed_tokens), last_accessed, block_id)
+        # assert block_id not in self.free_table, f"Block {block_id} already in evictor"
+        if not self.USE_MINEXP:
+            val = total_count * self.delta(num_hashed_tokens)
+            self.heap.insert(val, last_accessed, block_id)
         else:
-            self.heap.insert(total_count[0], total_count[1], self.delta(num_hashed_tokens), last_accessed, block_id)
+            val = self.delta(num_hashed_tokens)
+            self.heap1.insert(total_count[0] * val, last_accessed, block_id)
+            self.heap2.insert(total_count[1] * val, last_accessed, block_id)
+        
+        self.free_table[block_id] = BlockMetaData(
+            content_hash, num_hashed_tokens, last_accessed, total_count, val)
 
     def update(self, block_id: int, last_accessed: float):
         """Update corresponding block's access time in metadata"""
@@ -330,21 +414,26 @@ class WeightEvictor(Evictor):
         block = self.free_table.get(block_id)
         if block is None:
             raise ValueError(f"Block {block_id} not found in free_table")
-        if self.base2 is not None:
-            self.heap.erase(block.total_count[0], block.total_count[1], self.delta(block.num_hashed_tokens), block.last_accessed, block_id)
-            H, T = block.total_count
-            H *= math.exp(-(last_accessed - block.last_accessed) / TANH_THETA)
-            T = 1 - 1 / ((1/(1-T)-1) * math.exp(-2*(last_accessed - block.last_accessed)/TANH_THETA) + 1)
-            block.total_count = (H + T, (1-1/(math.exp(2*TANH_DELTA/TANH_THETA)+1)) * count)
+        val = self.delta(block.num_hashed_tokens)
+        if self.USE_MINEXP:
+            self.heap1.erase(block.total_count[0] * val, block.last_accessed, block_id)
+            self.heap2.erase(block.total_count[1] * val, block.last_accessed, block_id)
+            exp1, exp2 = block.total_count
+            exp1 *= self.MINEXP_ALPHA ** (now - self.last_accessed)
+            exp1 += self.MINEXP_A
+            exp2 *= self.MINEXP_BETA ** (now - self.last_accessed)
+            exp2 += self.MINEXP_B
+            block.total_count = (exp1, exp2)
             block.last_accessed = last_accessed
-            self.heap.insert(block.total_count[0], block.total_count[1], self.delta(block.num_hashed_tokens), last_accessed, block_id) 
+            self.heap1.insert(block.total_count[0] * val, block.last_accessed, block_id)
+            self.heap2.insert(block.total_count[1] * val, block.last_accessed, block_id)
         else:
-            self.heap.erase(block.total_count * self.delta(block.num_hashed_tokens), block.last_accessed, block_id)
+            self.heap.erase(block.total_count * val, block.last_accessed, block_id)
             block.total_count *= self.base ** (last_accessed - block.last_accessed)
             block.total_count += 1
             block.last_accessed = last_accessed
             # Reinsert the block with the updated last_accessed time
-            self.heap.insert(block.total_count * self.delta(block.num_hashed_tokens), last_accessed, block_id) 
+            self.heap.insert(block.total_count * val, last_accessed, block_id) 
 
     def remove(self, block_id: int):
         """Remove a given block id from the cache."""
@@ -352,11 +441,12 @@ class WeightEvictor(Evictor):
             raise ValueError(
                 "Attempting to remove block that's not in the evictor")
         block = self.free_table.pop(block_id)
-        if self.base2 is None:
-            self.heap.erase(block.total_count * self.delta(block.num_hashed_tokens), block.last_accessed, block_id)
+        val = self.delta(block.num_hashed_tokens)
+        if self.USE_MINEXP:
+            self.heap1.erase(block.total_count[0] * val, block.last_accessed, block_id)
+            self.heap2.erase(block.total_count[1] * val, block.last_accessed, block_id)
         else:
-            self.heap.erase(block.total_count[0], block.total_count[1], self.delta(block.num_hashed_tokens), block.last_accessed, block_id)
-
+            self.heap.erase(block.total_count * val, block.last_accessed, block_id)
         return block
 
     @property
@@ -368,22 +458,22 @@ def make_evictor(eviction_policy: EvictionPolicy) -> Evictor:
         print("evictor:LRU")
         return LRUEvictor()
     elif eviction_policy == EvictionPolicy.MWF:
-        from vllm.core.block.common import BASE_FREQ, USE_TANH
-        c = 16.975203511045493
-        k = 0.00043533405552524906
-        if USE_TANH:
-            print("evictor:MWF_TANH")
-            from vllm.core.block.common import TANH_DELTA, TANH_THETA
-            return WeightEvictor(TANH_DELTA, lambda x: k * x + c, TANH_THETA)
+        from vllm.core.block.common import BASE_FREQ, USE_MINEXP
+        c = 1.8544166376320397
+        k = 7.411805757842883e-05
+        if USE_MINEXP:
+            print("evictor:MWF_MINEXP")
+            from vllm.core.block.common import MINEXP_A, MINEXP_B, MINEXP_ALPHA, MINEXP_BETA
+            return WeightEvictor(MINEXP_A, MINEXP_B, MINEXP_ALPHA, MINEXP_BETA, lambda x: k * x + c)
         else:
             return WeightEvictor(BASE_FREQ, lambda x: k * x + c)
     elif eviction_policy == EvictionPolicy.LFU:
-        from vllm.core.block.common import BASE_FREQ, USE_TANH
+        from vllm.core.block.common import BASE_FREQ, USE_MINEXP
         print("evictor:LFU")
-        if USE_TANH:
-            print("evictor:LFU_TANH")
-            from vllm.core.block.common import TANH_DELTA, TANH_THETA
-            return LFUEvictor(TANH_DELTA, TANH_THETA)
+        if USE_MINEXP:
+            print("evictor:LFU_MINEXP")
+            from vllm.core.block.common import MINEXP_A, MINEXP_B, MINEXP_ALPHA, MINEXP_BETA
+            return LFUEvictor(MINEXP_A, MINEXP_B, MINEXP_ALPHA, MINEXP_BETA)
         else:
             return LFUEvictor(BASE_FREQ)
     else:

@@ -17,20 +17,36 @@ except Exception:
     HALF_LIFE = 100
 BASE_FREQ: float = 0.5**(1/HALF_LIFE)
 
-_use_tanh = os.environ.get('USE_TANH', 'None') == '1'
-_tanh_delta = os.environ.get('TANH_DELTA', 10)
-_tanh_theta = os.environ.get('TANH_THETA', 1)
-USE_TANH = False
-if _use_tanh:
+_use_minexp = os.environ.get('USE_MINEXP', 'None') == '1'
+_minexp_A = os.environ.get('MINEXP_A', 10)
+_minexp_alpha = os.environ.get('MINEXP_ALPHA', 1)
+_minexp_B = os.environ.get('MINEXP_B', 10)
+_minexp_beta = os.environ.get('MINEXP_BETA', 1)
+
+USE_MINEXP = False
+if _use_minexp:
+    USE_MINEXP = True
     try:
-        TANH_DELTA = float(_tanh_delta)
+        MINEXP_ALPHA = float(_minexp_alpha)
     except:
-        TANH_DELTA = 10
+        MINEXP_ALPHA = 1
     try:
-        TANH_THETA = float(_tanh_theta)
+        MINEXP_BETA = float(_minexp_beta)
     except:
-        TANH_THETA = 1
-    USE_TANH = True
+        MINEXP_BETA = 1
+    try:
+        MINEXP_A = float(_minexp_A)
+    except:
+        MINEXP_A = 10
+    try:
+        MINEXP_B = float(_minexp_B)
+    except:
+        MINEXP_B = 10
+    import math
+    MINEXP_ALPHA = math.exp(-1 / MINEXP_ALPHA)
+    MINEXP_A = MINEXP_ALPHA ** MINEXP_A
+    MINEXP_BETA = math.exp(-1 / MINEXP_BETA)
+    MINEXP_B = MINEXP_BETA ** MINEXP_B
 
 class RefCounterProtocol(Protocol):
 

@@ -7,7 +7,7 @@ from typing import (Callable, Dict, FrozenSet, Iterable, List, Optional, Set,
                     Tuple, Union)
 
 from vllm.core.block.common import (CacheMetricData, CopyOnWriteTracker,
-                                    get_all_blocks_recursively, BASE_FREQ, USE_TANH, TANH_DELTA, TANH_THETA)
+                                    get_all_blocks_recursively, BASE_FREQ, USE_MINEXP)
 from vllm.core.block.interfaces import (Block, BlockAllocator, BlockId, Device,
                                         DeviceAwareBlockAllocator)
 from vllm.core.block.naive_block import (BlockPool, NaiveBlock,
@@ -36,7 +36,7 @@ class BlockTracker:
     def reset(self):
         self.last_accessed: float = _DEFAULT_LAST_ACCESSED_TIME
         self.computed: bool = False
-        if USE_TANH:
+        if USE_MINEXP:
             self.total_count: Optional[Tuple[float, float]] = (0, 0)
         else:
             self.total_count: Optional[float] = 0
@@ -601,12 +601,15 @@ class PrefixCachingBlockAllocator(BlockAllocator):
 
         for block_id in block_ids:
             if self._block_tracker[block_id].active:
-                if USE_TANH:
-                    H, T = self._block_tracker[block_id].total_count
-                    last = self._block_tracker[block_id].last_accessed
-                    H *= math.exp(-(now - last) / TANH_THETA)
-                    T = 1 - 1 / ((1/(1-T)-1) * math.exp(-2*(now - last)/TANH_THETA) + 1)
-                    self._block_tracker[block_id].total_count = (H + T, 1-1/(math.exp(2*TANH_DELTA/TANH_THETA)+1))
+                if USE_MINEXP:
+                    from vllm.core.block.common import (MINEXP_A, MINEXP_ALPHA, MINEXP_B, MINEXP_BETA)
+                    exp1, exp2 = self._block_tracker[block_id].total_count
+                    d = now - self._block_tracker[block_id].last_accessed
+                    exp1 *= MINEXP_ALPHA ** d
+                    exp1 += MINEXP_A
+                    exp2 *= MINEXP_BETA ** d
+                    exp2 += MINEXP_B
+                    self._block_tracker[block_id].total_count = (exp1, exp2)
                 else:
                     self._block_tracker[block_id].total_count *= BASE_FREQ ** (now - self._block_tracker[block_id].last_accessed)
                     self._block_tracker[block_id].total_count += 1
@@ -1202,7 +1205,7 @@ class ComputedBlocksTracker:
                 # If the sequence does not have suffix_computed_block_locs,
                 # we generate it here.
                 self._seq_id_to_num_tokens_computed[seq.seq_id], seq.suffix_computed_block_locs = self._allocator.find_cached_blocks_multiseg(block_hashes)
-                logger.debug(f"seq_id {seq.seq_id} has suffix_computed_block_locs {seq.suffix_computed_block_locs}, first_compute_start {self._seq_id_to_num_tokens_computed[seq.seq_id]}")
+                # logger.debug(f"seq_id {seq.seq_id} has suffix_computed_block_locs {seq.suffix_computed_block_locs}, first_compute_start {self._seq_id_to_num_tokens_computed[seq.seq_id]}")
             
             if firstseg_only:
                 return seq.suffix_computed_block_locs[4]
