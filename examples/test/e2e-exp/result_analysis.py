@@ -116,7 +116,7 @@ def analyze_jsonl(file_path):
 def summarize_folder(folder_path, output_csv="summary.csv"):
     results = []
     for filename in os.listdir(folder_path):
-        if filename.startswith("LongBench"):
+        if filename.startswith("LongBench_simulator"):
             file_path = os.path.join(folder_path, filename)
             print(f"Processing {filename} ...")
             stats = analyze_jsonl(file_path)
@@ -147,5 +147,5 @@ def summarize_folder(folder_path, output_csv="summary.csv"):
 
 
 if __name__ == "__main__":
-    folder = "./e2e-results"
+    folder = "/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp"
     summarize_folder(folder, output_csv="summary.csv")

@@ -3,10 +3,17 @@ import re
 import csv
 from collections import defaultdict
 
-log_dir = "Longbench_exp/common_prefix_experiment/qps2.0_7B_longbench_simulate_logs"
-out_csv = "ten_longbench_7B_qps2.0_cache_stats.csv"
-
-fname_re = re.compile(r"Longbench_simulator_(?P<policy>mwf|lru|lfu)_qps[\d.]+_div(?P<div>\d+)_h(?P<h>\d+)\.log", re.IGNORECASE)
+log_dir = "Longbench-exp/minexp_7B_longbench_simulate_logs"
+out_csv = "two_longbench_7B_cache_stats.csv"
+fname_re = re.compile(
+    r"Longbench_simulator_"
+    r"(?P<policy>mwf|lru|lfu)_"
+    r"qps(?P<qps>[\d.]+)_"
+    r"div(?P<div>\d+)"
+    r"(?:_grad(?P<grad>\d+))?"
+    r"_P(?P<percent>\d+)\.log",
+    re.IGNORECASE
+)
 line_pattern = re.compile(r"num_blocks=(\d+).*?suffix_computed_block_locs:\s*\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\].*?first_compute_start:\s*(\d+)")
 
 agg = defaultdict(
@@ -27,11 +34,13 @@ for fn in sorted(os.listdir(log_dir)):
     if not mfn:
         continue
     div = int(mfn.group("div"))
-    half_time = int(mfn.group("h"))
+    qps = float(mfn.group("qps"))
+    percent = int(mfn.group("percent"))
+    grad = int(mfn.group("grad")) if mfn.group("grad") else 10
     policy = mfn.group("policy").lower()
-    key = (policy, div, half_time)
+    key = (policy, div, qps, grad, percent)
     path = os.path.join(log_dir, fn)
-    if div <= 320 and half_time <= 100:
+    if div <= 320:
         try:
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 for line in f:
@@ -79,7 +88,7 @@ for fn in sorted(os.listdir(log_dir)):
 with open(out_csv, "w", newline="", encoding="utf-8") as csvf:
     writer = csv.writer(csvf)
     writer.writerow([
-        "policy", "div", "half_time",
+        "policy", "div", "qps", "grad", "percent",
         "avg_hit_rate",
         "single_ratio",              
         "true_double_ratio",
@@ -90,8 +99,8 @@ with open(out_csv, "w", newline="", encoding="utf-8") as csvf:
         "total_items"
     ])
 
-    for key in sorted(agg.keys(), key=lambda x: (x[0], x[1], x[2])):
-        policy, div, half_time = key
+    for key in sorted(agg.keys(), key=lambda x: (x[0], x[1], x[2], x[3], x[4])):
+        policy, div, qps, grad, percent = key
         rec = agg[key]
 
         total = rec["total_matches"]
@@ -116,7 +125,7 @@ with open(out_csv, "w", newline="", encoding="utf-8") as csvf:
         one_block_ratio = one_block / (true_double + false_double + true_triple + false_triple) if (true_double + false_double + true_triple + false_triple) > 0 else 0.0
 
         writer.writerow([
-            policy, div, half_time,
+            policy, div, qps, grad, percent,
             f"{avg_hit_rate:.6f}",
             f"{single_ratio:.6f}",
             f"{true_double_ratio:.6f}",

@@ -13,7 +13,7 @@ def read_burstgpt_data(file_path: str) -> pd.DataFrame:
 
 burstgpt_data = read_burstgpt_data(file_name)
 ts_lowerbound = 2 * 24 * 60 * 60  # 2 days in seconds
-ts_upperbound = 15 * 24 * 60 * 60 + 36000  # 15 days in seconds
+ts_upperbound = 3.71 * 24 * 60 * 60 + 700 # 5.4 * 24 * 60 * 60 + 3700 15 days in seconds 15 * 24 * 60 * 60 + 36000
 
 filtered_data = burstgpt_data[
     (burstgpt_data['Model'] == 'GPT-4') &
@@ -25,7 +25,7 @@ filtered_data = filtered_data.iloc[:-1]
 print(len(filtered_data))
 print(filtered_data.isna().any().any())
 
-def rescale_to_qps(df: pd.DataFrame, qps: float, col='Timestamp', output_csv='10_time_qps0.02.csv'):
+def rescale_to_qps(df: pd.DataFrame, qps: float, col='Timestamp', output_csv='time_qps0.05.csv'):
     # 转为数值并去掉NaN
     x = pd.to_numeric(df[col], errors='coerce').dropna()
     order = np.argsort(x.values)
@@ -57,5 +57,5 @@ def rescale_to_qps(df: pd.DataFrame, qps: float, col='Timestamp', output_csv='10
         new_qps = len(vals) / new_duration
         print(f"新 QPS: {new_qps:.6f}，目标 QPS: {qps:.6f}")
 
-target_qps = 0.02
-rescale_to_qps(filtered_data, qps=target_qps, col='Timestamp', output_csv='10_time_qps0.02.csv')
+target_qps = 0.05
+rescale_to_qps(filtered_data, qps=target_qps, col='Timestamp', output_csv='time_qps0.05.csv')
