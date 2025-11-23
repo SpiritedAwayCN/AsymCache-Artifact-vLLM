@@ -13,7 +13,7 @@ csv_files = [
     # "outputs_q0.05_d20.csv",
     # "outputs_q0.05_d40.csv",
     # "outputs_q0.05_d80.csv",
-    "outputs_q0.02_d30.csv",
+    "outputs_q0.02_d40.csv",
     # "outputs_q0.02_d10.csv",
     # "outputs_q0.02_d20.csv",
     # "outputs_q0.02_d40.csv",
@@ -56,7 +56,7 @@ def compute_deltas(csv_path):
 
 config_lines = []
 # plt.figure(figsize=(12, 4))
-percentiles = [90]
+percentiles = [75]
 
 for i, csv_path in enumerate(csv_files):
     all_deltas = compute_deltas(csv_path)
@@ -71,12 +71,12 @@ for i, csv_path in enumerate(csv_files):
 
     for p in percentiles:
         val = p_values[p]
-        y_val = np.searchsorted(x, val, side="right") / len(x)
-        
+        # y_val = np.searchsorted(x, val, side="right") / len(x)
+        y_val = 0.9
         A = 0.0
-        B = -0.9 * val
+        B = -0.99 * val
         alpha = -val / np.log(y_val)
-        beta = -val / (10 * np.log(y_val))
+        beta = -val / (100 * np.log(y_val))
 
         line = f"{div} {qps} {p} {alpha:.6e} {beta:.6e} {A} {B:.6e}"
         print(line)

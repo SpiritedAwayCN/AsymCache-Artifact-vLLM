@@ -19,8 +19,10 @@ parser.add_argument('--policy', '-p', type=str, choices=['mwf', 'lru', 'lfu'], d
 parser.add_argument('--dataset', '-D', type=str, choices=['leval', 'longbench'], default='longbench')
 parser.add_argument('--use_model_output', '-mo', action='store_true', help='是否要启用模型生成的输出')
 parser.add_argument('--model_output_file', '-mf', type=str, default=None, help='deepseek生成的输出jsonl文件路径')
+parser.add_argument('--prefix_mode', '-pm', action='store_true', default=False, help='是否启用prefix模式')
 arg = parser.parse_args()
 
+is_prefix_mode = arg.prefix_mode
 if arg.policy == 'mwf':
     policy = EvictionPolicy.MWF
 elif arg.policy == 'lru':
@@ -93,7 +95,7 @@ def simulate_allocate_block(msgs, chat_template=None):
         tokenizer,
         conversation=conversation,
         chat_template=chat_template,
-        add_generation_prompt=True,
+        add_generation_prompt=False,
         continue_final_message=False,
         model_config=model_config,
         tools=None,
@@ -105,7 +107,7 @@ def simulate_allocate_block(msgs, chat_template=None):
         prompt = prompt_data
     
     seq_id = next(seq_counter)
-    arrival_time = 0.5 + seq_id * arg.qps
+    arrival_time = 0.5 + seq_id / arg.qps
     prompt_token_ids = tokenizer.encode(prompt)
     
     seq = Sequence(
@@ -202,17 +204,30 @@ if __name__ == '__main__':
 
         data = datasets[file_name][line_number]
         msgs2 = [{'role': 'user', 'content': data['input'] + '\n\n'}]
-        for idx, question in enumerate(data['instructions']):
-            if idx > current_turn_map[current_turn_map_key]:
-                break
-            if idx == 0:
-                msgs2[0]['content'] += question
-            else:
-                if arg.use_model_output:
-                    gen_key = (file_name, line_number, idx-1)
-                    answer_text = model_outputs.get(gen_key, data['outputs'][idx-1])
+        if not is_prefix_mode:
+            # build multi-turn conversation
+            for idx, question in enumerate(data['instructions']):
+                if idx > current_turn_map[current_turn_map_key]:
+                    break
+                if idx == 0:
+                    msgs2[0]['content'] += question
                 else:
-                    answer_text = data['outputs'][idx-1]
+                    msgs2.append({'role': 'user', 'content': question})
+                
+                if arg.use_model_output:
+                    gen_key = (file_name, line_number, idx)
+                    answer_text = model_outputs.get(gen_key, data['outputs'][idx])
+                else:
+                    answer_text = data['outputs'][idx]
                 msgs2.append({'role': 'assistant', 'content': answer_text})
-                msgs2.append({'role': 'user', 'content': question})
+        else:
+            # build prefix conversation
+            idx = current_turn_map[current_turn_map_key]
+            msgs2[0]['content'] += data['instructions'][idx]
+            if arg.use_model_output:
+                gen_key = (file_name, line_number, idx)
+                answer_text = model_outputs.get(gen_key, data['outputs'][idx])
+            else:
+                answer_text = data['outputs'][idx]
+            msgs2.append({'role': 'assistant', 'content': answer_text})
         simulate_allocate_block(msgs2, chat_template=chat_template)

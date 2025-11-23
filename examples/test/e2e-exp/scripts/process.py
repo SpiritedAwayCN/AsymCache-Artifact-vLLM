@@ -3,8 +3,8 @@ import re
 import csv
 from collections import defaultdict
 
-log_dir = "Longbench-exp/minexp_7B_longbench_simulate_logs"
-out_csv = "two_longbench_7B_cache_stats.csv"
+log_dir = "Longbench-exp/minexp_7B_longbench_simulate_logs_bugfixed"
+out_csv = "two_longbench_7B_cache_stats_bugfixed.csv"
 fname_re = re.compile(
     r"Longbench_simulator_"
     r"(?P<policy>mwf|lru|lfu)_"

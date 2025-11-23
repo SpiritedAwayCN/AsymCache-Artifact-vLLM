@@ -116,7 +116,7 @@ def analyze_jsonl(file_path):
 def summarize_folder(folder_path, output_csv="summary.csv"):
     results = []
     for filename in os.listdir(folder_path):
-        if filename.startswith("LongBench_simulator"):
+        if filename.endswith("P90_slope100.jsonl"):
             file_path = os.path.join(folder_path, filename)
             print(f"Processing {filename} ...")
             stats = analyze_jsonl(file_path)
