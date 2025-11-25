@@ -36,7 +36,7 @@ else:
 
 
 input_file_name = f'./{dataset_prefix.lower()}_data/1_outputs_q{args.qps}_d{args.div}.csv'
-output_file_name = f"./{dataset_prefix}_simulator_{args.policy}_qps{args.qps}_div{args.div}_x75_P90_slope100.jsonl"
+output_file_name = f"./{dataset_prefix}_simulator_{args.policy}_qps{args.qps}_div{args.div}_x75_P90_slope40.jsonl"
 df = pd.read_csv(input_file_name)
 model = "LargeWorldModel/LWM-Text-1M"
 tokenizer = AutoTokenizer.from_pretrained(model)

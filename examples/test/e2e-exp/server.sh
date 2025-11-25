@@ -12,9 +12,9 @@ export VLLM_USE_POD_ATTN=1
 # export VLLM_SCHEDULE_ONE_PREFILL=1
 export USE_MINEXP=1
 export MINEXP_A=0.0
-export MINEXP_B=-1.033592e+03
+export MINEXP_B=-1.017932e+03
 export MINEXP_ALPHA=9.909144e+03
-export MINEXP_BETA=9.909144e+01
+export MINEXP_BETA=2.477286e+02
 export VLLM_EVICTOR_POLICY=mwf
 export VLLM_LOGGING_LEVEL=INFO
 # export CUDA_LAUNCH_BLOCKING=1
@@ -51,7 +51,7 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm
     --max-model-len 450000 \
     --max_num_batched_tokens 8192 \
     --gpu-memory-utilization 0.8 \
-    > new_mwf_qps0.02_div40_x75_P90_slope100_server_output.log &
+    > new_mwf_qps0.02_div40_x75_P90_slope40_server_output.log &
     # --collect_detailed_traces all \
     # --enforce-eager \
 

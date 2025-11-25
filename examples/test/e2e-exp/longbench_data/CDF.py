@@ -56,7 +56,7 @@ def compute_deltas(csv_path):
 
 config_lines = []
 # plt.figure(figsize=(12, 4))
-percentiles = [75]
+percentiles = [90]
 
 for i, csv_path in enumerate(csv_files):
     all_deltas = compute_deltas(csv_path)
@@ -71,8 +71,7 @@ for i, csv_path in enumerate(csv_files):
 
     for p in percentiles:
         val = p_values[p]
-        # y_val = np.searchsorted(x, val, side="right") / len(x)
-        y_val = 0.9
+        y_val = np.searchsorted(x, val, side="right") / len(x)
         A = 0.0
         B = -0.99 * val
         alpha = -val / np.log(y_val)
