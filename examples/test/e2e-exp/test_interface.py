@@ -17,7 +17,7 @@ API_URL = f'http://{vllm_host_ip}:8048/v1/completions'
 parser = argparse.ArgumentParser()
 parser.add_argument('--div', '-d', type=int, default=40)
 parser.add_argument('--qps', '-q', type=float, default=0.02)
-parser.add_argument('--half_life', '-hl', type=int, default=40)
+# parser.add_argument('--half_life', '-hl', type=int, default=40)
 parser.add_argument('--policy', '-p', type=str, choices=['mwf', 'lru'], default='mwf')
 parser.add_argument('--dataset', '-ds', type=str, choices=['leval', 'longbench', 'LooGLE'], default='leval')
 parser.add_argument('--use_model_output', '-mo', action='store_true', help='是否要启用模型生成的输出')
@@ -35,8 +35,8 @@ else:
     raise ValueError(f"Unknown dataset: {args.dataset}")
 
 
-input_file_name = f'./{dataset_prefix.lower()}_data/outputs_q{args.qps}_d{args.div}.csv'
-output_file_name = f"./e2e-results/{dataset_prefix}_simulator_{args.policy}_qps{args.qps}_div{args.div}_h{args.half_life}.jsonl"
+input_file_name = f'./{dataset_prefix.lower()}_data/1_outputs_q{args.qps}_d{args.div}.csv'
+output_file_name = f"./{dataset_prefix}_simulator_{args.policy}_qps{args.qps}_div{args.div}_P90_slope40.jsonl"
 df = pd.read_csv(input_file_name)
 model = "LargeWorldModel/LWM-Text-1M"
 tokenizer = AutoTokenizer.from_pretrained(model)

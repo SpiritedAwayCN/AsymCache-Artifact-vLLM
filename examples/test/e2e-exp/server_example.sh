@@ -10,8 +10,12 @@ export TRANSFORMERS_OFFLINE=1
 export VLLM_USE_V1=0
 export VLLM_USE_POD_ATTN=1
 # export VLLM_SCHEDULE_ONE_PREFILL=1
-export HALF_LIFE=40
-export VLLM_EVICTOR_POLICY=lru
+export USE_MINEXP=1
+export MINEXP_A=0.0
+export MINEXP_B=-1.741882e+03
+export MINEXP_ALPHA=1.695650e+04
+export MINEXP_BETA=4.239124e+02
+export VLLM_EVICTOR_POLICY=mwf
 export VLLM_LOGGING_LEVEL=INFO
 # export CUDA_LAUNCH_BLOCKING=1
 export HF_ENDPOINT=https://hf-mirror.com
@@ -47,7 +51,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm
     --max-model-len 450000 \
     --max_num_batched_tokens 8192 \
     --gpu-memory-utilization 0.8 \
-    > lru_qps0.02_h60_div40_server_output.log &
+    > new_mwf_qps0.02_div40_P90_slope40_server_output.log &
     # --collect_detailed_traces all \
     # --enforce-eager \
 

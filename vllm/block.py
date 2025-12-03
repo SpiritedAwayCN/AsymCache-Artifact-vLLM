@@ -7,15 +7,14 @@ from vllm.sequence import Sequence, SequenceGroup
 import os
 import math
 
-_use_minexp = os.environ.get('USE_MINEXP', 'None') == '1'
+_use_minexp = int(os.environ.get('USE_MINEXP', 0))
 _minexp_A = os.environ.get('MINEXP_A', 10)
 _minexp_alpha = os.environ.get('MINEXP_ALPHA', 1)
 _minexp_B = os.environ.get('MINEXP_B', 10)
 _minexp_beta = os.environ.get('MINEXP_BETA', 1)
 
-USE_MINEXP = False
-if _use_minexp:
-    USE_MINEXP = True
+USE_MINEXP = _use_minexp
+if _use_minexp >= 1:
     try:
         MINEXP_ALPHA = float(_minexp_alpha)
     except:
@@ -67,7 +66,7 @@ class PhysicalTokenBlock:
         self.ref_count = 0
         self.last_accessed = DEFAULT_LAST_ACCESSED_TIME
         # self.ref_seqs: Set[Sequence] = set()
-        if USE_MINEXP:
+        if USE_MINEXP > 0:
             self.total_count = (0, 0)
         else:
             self.total_count = 0
@@ -89,7 +88,9 @@ class PhysicalTokenBlock:
     
     def add_total_count(self, count: int, now: float):
         if self.last_accessed != DEFAULT_LAST_ACCESSED_TIME:
-            if self.USE_MINEXP:
+            if USE_MINEXP > 1:
+                self.total_count = (MINEXP_A, MINEXP_B)
+            elif USE_MINEXP == 1:
                 exp1, exp2 = self.total_count
                 exp1 *= MINEXP_ALPHA ** (now - self.last_accessed)
                 exp1 += MINEXP_A
@@ -101,7 +102,7 @@ class PhysicalTokenBlock:
                 self.total_count += count
     
     def get_total_count(self, now: Optional[float] = None) -> float:
-        if self.USE_MINEXP:
+        if USE_MINEXP > 0:
             exp1, exp2 = self.total_count
             if now is None:
                 return min(self.total_count)

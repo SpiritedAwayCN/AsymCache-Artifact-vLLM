@@ -3,10 +3,17 @@ import re
 import csv
 from collections import defaultdict
 
-log_dir = "Leval_exp/new_four_data_experiment/qps2.0_70B_leval_simulate_logs"
-out_csv = "leval_four_qps2.0_cache_stats.csv"
-
-fname_re = re.compile(r"Leval_simulator_(?P<policy>mwf|lru|lfu)_qps[\d.]+_div(?P<div>\d+)_h(?P<h>\d+)\.log", re.IGNORECASE)
+log_dir = "Longbench-exp/minexp_7B_longbench_simulate_logs_bugfixed"
+out_csv = "two_longbench_7B_cache_stats_bugfixed.csv"
+fname_re = re.compile(
+    r"Longbench_simulator_"
+    r"(?P<policy>mwf|lru|lfu)_"
+    r"qps(?P<qps>[\d.]+)_"
+    r"div(?P<div>\d+)"
+    r"(?:_grad(?P<grad>\d+))?"
+    r"_P(?P<percent>\d+)\.log",
+    re.IGNORECASE
+)
 line_pattern = re.compile(r"num_blocks=(\d+).*?suffix_computed_block_locs:\s*\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\].*?first_compute_start:\s*(\d+)")
 
 agg = defaultdict(
@@ -27,11 +34,13 @@ for fn in sorted(os.listdir(log_dir)):
     if not mfn:
         continue
     div = int(mfn.group("div"))
-    half_time = int(mfn.group("h"))
+    qps = float(mfn.group("qps"))
+    percent = int(mfn.group("percent"))
+    grad = int(mfn.group("grad")) if mfn.group("grad") else 10
     policy = mfn.group("policy").lower()
-    key = (policy, div, half_time)
+    key = (policy, div, qps, grad, percent)
     path = os.path.join(log_dir, fn)
-    if div <= 320 and half_time <= 100:
+    if div <= 320:
         try:
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 for line in f:
@@ -58,8 +67,6 @@ for fn in sorted(os.listdir(log_dir)):
                     if s2 != 0:
                         if s0 != 0 and first_compute_start != 0:
                             agg[key]["true_triple_count"] += 1
-                            # print(s0, s1, s2, s3)
-                            # assert 0
                         else:
                             agg[key]["false_triple_count"] += 1
                         
@@ -71,7 +78,7 @@ for fn in sorted(os.listdir(log_dir)):
                     else:
                         if first_compute_start != 0:
                             agg[key]["single_count"] += 1
-                    if (s1-s0 == 64) or (s3-s2 == 64):
+                    if (s1 - s0 == 64) or (s3 - s2 == 64):
                         agg[key]["one_blocksize"] += 1
          
         except Exception as e:
@@ -81,7 +88,7 @@ for fn in sorted(os.listdir(log_dir)):
 with open(out_csv, "w", newline="", encoding="utf-8") as csvf:
     writer = csv.writer(csvf)
     writer.writerow([
-        "policy", "div", "half_time",
+        "policy", "div", "qps", "grad", "percent",
         "avg_hit_rate",
         "single_ratio",              
         "true_double_ratio",
@@ -92,15 +99,15 @@ with open(out_csv, "w", newline="", encoding="utf-8") as csvf:
         "total_items"
     ])
 
-    for key in sorted(agg.keys(), key=lambda x: (x[0], x[1], x[2])):
-        policy, div, half_time = key
+    for key in sorted(agg.keys(), key=lambda x: (x[0], x[1], x[2], x[3], x[4])):
+        policy, div, qps, grad, percent = key
         rec = agg[key]
 
         total = rec["total_matches"]
         if total == 0:
             continue
 
-        # ---- 取出统计字段 ----
+        # 取出统计字段
         single = rec["single_count"]
         one_block = rec["one_blocksize"]
         true_double = rec["true_double_count"]
@@ -109,7 +116,7 @@ with open(out_csv, "w", newline="", encoding="utf-8") as csvf:
         false_double = rec["false_double_count"]
         avg_hit_rate = rec["total_hit_rate"] / total if total > 0 else 0.0
     
-        # ---- 各项比例 ----
+        # 各项比例
         single_ratio = single / total
         true_double_ratio = true_double / total
         true_triple_ratio = true_triple / total
@@ -117,9 +124,8 @@ with open(out_csv, "w", newline="", encoding="utf-8") as csvf:
         false_triple_ratio = false_triple / total
         one_block_ratio = one_block / (true_double + false_double + true_triple + false_triple) if (true_double + false_double + true_triple + false_triple) > 0 else 0.0
 
-        # ---- 输出到 CSV ----
         writer.writerow([
-            policy, div, half_time,
+            policy, div, qps, grad, percent,
             f"{avg_hit_rate:.6f}",
             f"{single_ratio:.6f}",
             f"{true_double_ratio:.6f}",

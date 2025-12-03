@@ -17,15 +17,14 @@ except Exception:
     HALF_LIFE = 100
 BASE_FREQ: float = 0.5**(1/HALF_LIFE)
 
-_use_minexp = os.environ.get('USE_MINEXP', 'None') == '1'
+_use_minexp = int(os.environ.get('USE_MINEXP', 0))
 _minexp_A = os.environ.get('MINEXP_A', 10)
 _minexp_alpha = os.environ.get('MINEXP_ALPHA', 1)
 _minexp_B = os.environ.get('MINEXP_B', 10)
 _minexp_beta = os.environ.get('MINEXP_BETA', 1)
 
-USE_MINEXP = False
-if _use_minexp:
-    USE_MINEXP = True
+USE_MINEXP = _use_minexp
+if _use_minexp > 0:
     try:
         MINEXP_ALPHA = float(_minexp_alpha)
     except:

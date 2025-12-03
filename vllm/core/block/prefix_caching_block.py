@@ -601,7 +601,11 @@ class PrefixCachingBlockAllocator(BlockAllocator):
 
         for block_id in block_ids:
             if self._block_tracker[block_id].active:
-                if USE_MINEXP:
+                # logger.info(f'Using MINEXP={USE_MINEXP} for block access frequency tracking.')
+                if USE_MINEXP > 1:
+                    from vllm.core.block.common import (MINEXP_A, MINEXP_ALPHA, MINEXP_B, MINEXP_BETA)
+                    self._block_tracker[block_id].total_count = (MINEXP_A, MINEXP_B)
+                elif USE_MINEXP == 1:
                     from vllm.core.block.common import (MINEXP_A, MINEXP_ALPHA, MINEXP_B, MINEXP_BETA)
                     exp1, exp2 = self._block_tracker[block_id].total_count
                     d = now - self._block_tracker[block_id].last_accessed
