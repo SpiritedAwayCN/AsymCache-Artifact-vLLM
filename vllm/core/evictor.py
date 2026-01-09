@@ -428,9 +428,9 @@ class BSEvictor(Evictor):
         else:
             logger.info(f"Using c_list in CSET_DIR: {module_directory}")
         sys.path.append(module_directory)
-        from c_set import c_list
-        self.list1 = c_list(self.MINEXP_ALPHA)
-        self.list2 = c_list(self.MINEXP_BETA)
+        from c_set import c_list_with_num
+        self.list1 = c_list_with_num(self.MINEXP_ALPHA)
+        self.list2 = c_list_with_num(self.MINEXP_BETA)
         self._has_evicted = False
 
     def __contains__(self, block_id: int) -> bool:
@@ -453,12 +453,12 @@ class BSEvictor(Evictor):
             evicted_id = self.list1.pop_min()
             evicted_block = self.free_table.pop(evicted_id)
             self.list2.erase(evicted_block.total_count[1], 
-                                evicted_block.last_accessed, evicted_id)
+                                evicted_block.last_accessed, evicted_id, evicted_block.num_hashed_tokens)
         else:
             evicted_id = self.list2.pop_min()
             evicted_block = self.free_table.pop(evicted_id)
             self.list1.erase(evicted_block.total_count[0], 
-                                evicted_block.last_accessed, evicted_id)
+                                evicted_block.last_accessed, evicted_id, evicted_block.num_hashed_tokens)
         
         if not self._has_evicted:
             self._has_evicted = True
@@ -470,8 +470,8 @@ class BSEvictor(Evictor):
         """Adds block to the evictor, making it a candidate for eviction"""
         # assert block_id not in self.free_table, f"Block {block_id} already in evictor"
 
-        self.list1.insert(total_count[0], last_accessed, block_id)
-        self.list2.insert(total_count[1], last_accessed, block_id)
+        self.list1.insert(total_count[0], last_accessed, block_id, num_hashed_tokens)
+        self.list2.insert(total_count[1], last_accessed, block_id, num_hashed_tokens)
     
         self.free_table[block_id] = BlockMetaData(
             content_hash, num_hashed_tokens, last_accessed, total_count)
@@ -482,8 +482,8 @@ class BSEvictor(Evictor):
         block = self.free_table.get(block_id)
         if block is None:
             raise ValueError(f"Block {block_id} not found in free_table")
-        self.list1.erase(block.total_count[0], block.last_accessed, block_id)
-        self.list2.erase(block.total_count[1], block.last_accessed, block_id)
+        self.list1.erase(block.total_count[0], block.last_accessed, block_id, block.num_hashed_tokens)
+        self.list2.erase(block.total_count[1], block.last_accessed, block_id, block.num_hashed_tokens)
         exp1, exp2 = block.total_count
         exp1 *= self.MINEXP_ALPHA ** (now - self.last_accessed)
         exp1 += self.MINEXP_A
@@ -491,8 +491,8 @@ class BSEvictor(Evictor):
         exp2 += self.MINEXP_B
         block.total_count = (exp1, exp2)
         block.last_accessed = last_accessed
-        self.list1.insert(block.total_count[0], block.last_accessed, block_id)
-        self.list2.insert(block.total_count[1], block.last_accessed, block_id)
+        self.list1.insert(block.total_count[0], block.last_accessed, block_id, block.num_hashed_tokens)
+        self.list2.insert(block.total_count[1], block.last_accessed, block_id, block.num_hashed_tokens)
 
     def remove(self, block_id: int):
         """Remove a given block id from the cache."""
@@ -500,8 +500,8 @@ class BSEvictor(Evictor):
             raise ValueError(
                 "Attempting to remove block that's not in the evictor")
         block = self.free_table.pop(block_id)
-        self.list1.erase(block.total_count[0], block.last_accessed, block_id)
-        self.list2.erase(block.total_count[1], block.last_accessed, block_id)
+        self.list1.erase(block.total_count[0], block.last_accessed, block_id, block.num_hashed_tokens)
+        self.list2.erase(block.total_count[1], block.last_accessed, block_id, block.num_hashed_tokens)
         return block
 
     @property
