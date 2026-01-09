@@ -540,6 +540,10 @@ class Scheduler:
             evictor_policy = EvictionPolicy.MWF
         elif evictor_policy_env == "lfu":
             evictor_policy = EvictionPolicy.LFU
+        elif evictor_policy_env == "bs":
+            evictor_policy = EvictionPolicy.BS
+        elif evictor_policy_env == "pensieve":
+            evictor_policy = EvictionPolicy.PENSIEVE
         else:
             raise ValueError(f"Unknown evictor policy {evictor_policy_env=}")
 

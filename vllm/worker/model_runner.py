@@ -78,6 +78,8 @@ TModelInputForGPU = TypeVar('TModelInputForGPU', bound="ModelInputForGPU")
 torch._dynamo.config.cache_size_limit = 128
 torch._dynamo.config.accumulated_cache_size_limit = 128
 
+import os
+VLLM_ONLY_KEEP_SEG2 = os.getenv('VLLM_ONLY_KEEP_SEG2', '0') == '1'
 
 @dataclass(frozen=True)
 class ModelInputForGPU(ModelRunnerInputBase):
@@ -693,6 +695,13 @@ class ModelInputForGPUBuilder(ModelRunnerInputBuilderBase[ModelInputForGPU]):
         # When chunked prefill is enabled, this is the token number of
         # computed chunks + current chunk.
         seq_len = inter_data.seq_lens[seq_idx]
+
+        if VLLM_ONLY_KEEP_SEG2:
+            prefix_cache_len = context_len
+            inter_data.suffix_computed_block_locs[2], inter_data.suffix_computed_block_locs[3] = 0, 0
+            if not has_2_segments and len(computed_block_nums) == 0:
+                return
+
         if prefix_cache_len <= context_len and not has_2_segments:
             # print("choose 1")
             # We already passed the cache hit region,

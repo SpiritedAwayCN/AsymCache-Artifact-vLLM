@@ -7,7 +7,7 @@ from typing import (Callable, Dict, FrozenSet, Iterable, List, Optional, Set,
                     Tuple, Union)
 
 from vllm.core.block.common import (CacheMetricData, CopyOnWriteTracker,
-                                    get_all_blocks_recursively, BASE_FREQ, USE_MINEXP)
+                                    get_all_blocks_recursively, BASE_FREQ, USE_MINEXP, USE_PENSIEVE)
 from vllm.core.block.interfaces import (Block, BlockAllocator, BlockId, Device,
                                         DeviceAwareBlockAllocator)
 from vllm.core.block.naive_block import (BlockPool, NaiveBlock,
@@ -614,6 +614,8 @@ class PrefixCachingBlockAllocator(BlockAllocator):
                     exp2 *= MINEXP_BETA ** d
                     exp2 += MINEXP_B
                     self._block_tracker[block_id].total_count = (exp1, exp2)
+                elif USE_PENSIEVE:
+                    self._block_tracker[block_id].total_count += 1
                 else:
                     self._block_tracker[block_id].total_count *= BASE_FREQ ** (now - self._block_tracker[block_id].last_accessed)
                     self._block_tracker[block_id].total_count += 1

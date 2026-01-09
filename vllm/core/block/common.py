@@ -17,6 +17,7 @@ except Exception:
     HALF_LIFE = 100
 BASE_FREQ: float = 0.5**(1/HALF_LIFE)
 
+USE_PENSIEVE = os.environ.get('VLLM_EVICTOR_POLICY', 'lru') == 'pensieve'
 _use_minexp = int(os.environ.get('USE_MINEXP', 0))
 _minexp_A = os.environ.get('MINEXP_A', 10)
 _minexp_alpha = os.environ.get('MINEXP_ALPHA', 1)
