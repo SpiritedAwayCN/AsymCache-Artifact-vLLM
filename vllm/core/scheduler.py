@@ -540,6 +540,8 @@ class Scheduler:
             evictor_policy = EvictionPolicy.MWF
         elif evictor_policy_env == "lfu":
             evictor_policy = EvictionPolicy.LFU
+        elif evictor_policy_env == "mwf_bs":
+            evictor_policy = EvictionPolicy.MWF_BS
         elif evictor_policy_env == "bs":
             evictor_policy = EvictionPolicy.BS
         elif evictor_policy_env == "pensieve":

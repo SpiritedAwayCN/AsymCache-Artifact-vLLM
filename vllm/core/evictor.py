@@ -16,6 +16,7 @@ class EvictionPolicy(enum.Enum):
     LRU = enum.auto()
     MWF = enum.auto()
     LFU = enum.auto()
+    MWF_BS = enum.auto()
     BS = enum.auto()
     PENSIEVE = enum.auto()
 
@@ -311,7 +312,7 @@ class LFUEvictor(Evictor):
     @property
     def num_blocks(self) -> int:
         return len(self.free_table)
-class BSEvictor(Evictor):
+class MWF_BSEvictor(Evictor):
     def __init__(self, param1, param2, param3, param4, param5):
         self.free_table: Dict[int, BlockMetaData] = dict()
         self.MINEXP_A = param1
@@ -340,7 +341,6 @@ class BSEvictor(Evictor):
         """Runs the eviction algorithm and returns the evicted block's
         content hash along with physical block id along with physical block id
         """
-        func_timer.begin("bs_evict")
         if len(self.free_table) == 0:
             raise ValueError("No usable cache memory left")
 
@@ -364,13 +364,11 @@ class BSEvictor(Evictor):
         if not self._has_evicted:
             self._has_evicted = True
             logger.info(f"First eviction, list size = {len(self.free_table)}")
-        func_timer.end("bs_evict")
         return evicted_id, evicted_block.content_hash
 
     def add(self, block_id: int, content_hash: int, num_hashed_tokens: int,
             last_accessed: float, total_count: Optional[Union[float, Tuple[float, float]]] = None):
         """Adds block to the evictor, making it a candidate for eviction"""
-        func_timer.begin("bs_add")
         # assert block_id not in self.free_table, f"Block {block_id} already in evictor"
 
         val = self.delta(num_hashed_tokens)
@@ -379,12 +377,10 @@ class BSEvictor(Evictor):
     
         self.free_table[block_id] = BlockMetaData(
             content_hash, num_hashed_tokens, last_accessed, total_count, val)
-        func_timer.end("bs_add")
 
     def update(self, block_id: int, last_accessed: float):
         """Update corresponding block's access time in metadata"""
-        logger.warning(f"BSEvictor does not support update operation, got block_id={block_id}, last_accessed={last_accessed}")
-        func_timer.begin("bs_update")
+        logger.warning(f"MWF_BSEvictor does not support update operation, got block_id={block_id}, last_accessed={last_accessed}")
         block = self.free_table.get(block_id)
         if block is None:
             raise ValueError(f"Block {block_id} not found in free_table")
@@ -400,11 +396,9 @@ class BSEvictor(Evictor):
         block.last_accessed = last_accessed
         self.list1.insert(block.total_count[0] * val, block.last_accessed, block_id)
         self.list2.insert(block.total_count[1] * val, block.last_accessed, block_id)
-        func_timer.end("bs_update")
 
     def remove(self, block_id: int):
         """Remove a given block id from the cache."""
-        func_timer.begin("bs_remove")
         if block_id not in self.free_table:
             raise ValueError(
                 "Attempting to remove block that's not in the evictor")
@@ -412,7 +406,102 @@ class BSEvictor(Evictor):
         val = self.delta(block.num_hashed_tokens)
         self.list1.erase(block.total_count[0] * val, block.last_accessed, block_id)
         self.list2.erase(block.total_count[1] * val, block.last_accessed, block_id)
-        func_timer.end("bs_remove")
+        return block
+
+    @property
+    def num_blocks(self) -> int:
+        return len(self.free_table)
+
+class BSEvictor(Evictor):
+    def __init__(self, param1, param2, param3, param4):
+        self.free_table: Dict[int, BlockMetaData] = dict()
+        self.MINEXP_A = param1
+        self.MINEXP_B = param2
+        self.MINEXP_ALPHA = param3
+        self.MINEXP_BETA = param4
+
+        import sys
+        import os
+        module_directory = os.environ.get("CSET_DIR", None)
+        if module_directory is None:
+            looger.error("CSET_DIR environment variable not set")
+        else:
+            logger.info(f"Using c_list in CSET_DIR: {module_directory}")
+        sys.path.append(module_directory)
+        from c_set import c_list
+        self.list1 = c_list(self.MINEXP_ALPHA)
+        self.list2 = c_list(self.MINEXP_BETA)
+        self._has_evicted = False
+
+    def __contains__(self, block_id: int) -> bool:
+        return block_id in self.free_table
+
+    def evict(self) -> Tuple[int, int]:
+        """Runs the eviction algorithm and returns the evicted block's
+        content hash along with physical block id along with physical block id
+        """
+        if len(self.free_table) == 0:
+            raise ValueError("No usable cache memory left")
+
+        weight1, last_accessed1 = self.list1.min()
+        weight2, last_accessed2 = self.list2.min()
+        if last_accessed1 < last_accessed2:
+            weight1 *= self.MINEXP_ALPHA ** (last_accessed2 - last_accessed1)
+        else:
+            weight2 *= self.MINEXP_BETA ** (last_accessed1 - last_accessed2)
+        if weight1 < weight2:
+            evicted_id = self.list1.pop_min()
+            evicted_block = self.free_table.pop(evicted_id)
+            self.list2.erase(evicted_block.total_count[1], 
+                                evicted_block.last_accessed, evicted_id)
+        else:
+            evicted_id = self.list2.pop_min()
+            evicted_block = self.free_table.pop(evicted_id)
+            self.list1.erase(evicted_block.total_count[0], 
+                                evicted_block.last_accessed, evicted_id)
+        
+        if not self._has_evicted:
+            self._has_evicted = True
+            logger.info(f"First eviction, list size = {len(self.free_table)}")
+        return evicted_id, evicted_block.content_hash
+
+    def add(self, block_id: int, content_hash: int, num_hashed_tokens: int,
+            last_accessed: float, total_count: Optional[Union[float, Tuple[float, float]]] = None):
+        """Adds block to the evictor, making it a candidate for eviction"""
+        # assert block_id not in self.free_table, f"Block {block_id} already in evictor"
+
+        self.list1.insert(total_count[0], last_accessed, block_id)
+        self.list2.insert(total_count[1], last_accessed, block_id)
+    
+        self.free_table[block_id] = BlockMetaData(
+            content_hash, num_hashed_tokens, last_accessed, total_count)
+
+    def update(self, block_id: int, last_accessed: float):
+        """Update corresponding block's access time in metadata"""
+        logger.warning(f"BSEvictor does not support update operation, got block_id={block_id}, last_accessed={last_accessed}")
+        block = self.free_table.get(block_id)
+        if block is None:
+            raise ValueError(f"Block {block_id} not found in free_table")
+        self.list1.erase(block.total_count[0], block.last_accessed, block_id)
+        self.list2.erase(block.total_count[1], block.last_accessed, block_id)
+        exp1, exp2 = block.total_count
+        exp1 *= self.MINEXP_ALPHA ** (now - self.last_accessed)
+        exp1 += self.MINEXP_A
+        exp2 *= self.MINEXP_BETA ** (now - self.last_accessed)
+        exp2 += self.MINEXP_B
+        block.total_count = (exp1, exp2)
+        block.last_accessed = last_accessed
+        self.list1.insert(block.total_count[0], block.last_accessed, block_id)
+        self.list2.insert(block.total_count[1], block.last_accessed, block_id)
+
+    def remove(self, block_id: int):
+        """Remove a given block id from the cache."""
+        if block_id not in self.free_table:
+            raise ValueError(
+                "Attempting to remove block that's not in the evictor")
+        block = self.free_table.pop(block_id)
+        self.list1.erase(block.total_count[0], block.last_accessed, block_id)
+        self.list2.erase(block.total_count[1], block.last_accessed, block_id)
         return block
 
     @property
@@ -654,14 +743,20 @@ def make_evictor(eviction_policy: EvictionPolicy) -> Evictor:
             return LFUEvictor(MINEXP_A, MINEXP_B, MINEXP_ALPHA, MINEXP_BETA)
         else:
             return LFUEvictor(BASE_FREQ)
+    elif eviction_policy == EvictionPolicy.MWF_BS:
+        from vllm.core.block.common import BASE_FREQ, USE_MINEXP
+        assert USE_MINEXP
+        print("evictor:MWF_BS")
+        c = 1.8544166376320397
+        k = 7.411805757842883e-05
+        from vllm.core.block.common import MINEXP_A, MINEXP_B, MINEXP_ALPHA, MINEXP_BETA
+        return MWF_BSEvictor(MINEXP_A, MINEXP_B, MINEXP_ALPHA, MINEXP_BETA, lambda x: k * x + c)
     elif eviction_policy == EvictionPolicy.BS:
         from vllm.core.block.common import BASE_FREQ, USE_MINEXP
         assert USE_MINEXP
         print("evictor:BS")
-        c = 1.8544166376320397
-        k = 7.411805757842883e-05
         from vllm.core.block.common import MINEXP_A, MINEXP_B, MINEXP_ALPHA, MINEXP_BETA
-        return BSEvictor(MINEXP_A, MINEXP_B, MINEXP_ALPHA, MINEXP_BETA, lambda x: k * x + c)
+        return BSEvictor(MINEXP_A, MINEXP_B, MINEXP_ALPHA, MINEXP_BETA)        
     elif eviction_policy == EvictionPolicy.PENSIEVE:
         print("evictor:PensieveEvictor")
         c = 1.8544166376320397
