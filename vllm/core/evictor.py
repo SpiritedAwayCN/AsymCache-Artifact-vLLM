@@ -459,8 +459,8 @@ def make_evictor(eviction_policy: EvictionPolicy) -> Evictor:
         return LRUEvictor()
     elif eviction_policy == EvictionPolicy.MWF:
         from vllm.core.block.common import BASE_FREQ, USE_MINEXP
-        c = 1.8544166376320397
-        k = 7.411805757842883e-05
+        c = 16.975203511045493
+        k = 0.00043533405552524906
         if USE_MINEXP:
             print("evictor:MWF_MINEXP")
             from vllm.core.block.common import MINEXP_A, MINEXP_B, MINEXP_ALPHA, MINEXP_BETA

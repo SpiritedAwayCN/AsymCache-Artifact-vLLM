@@ -15,18 +15,17 @@ vllm_host_ip = os.popen("hostname -I | awk '{print $1}'").read().strip()
 API_URL = f'http://{vllm_host_ip}:8048/v1/completions'
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--div', '-d', type=int, default=40)
-parser.add_argument('--qps', '-q', type=float, default=0.02)
-# parser.add_argument('--half_life', '-hl', type=int, default=40)
+parser.add_argument('--q1', '-d', type=float, default=0.007)
+parser.add_argument('--q2', '-q', type=float, default=0.0007)
 parser.add_argument('--policy', '-p', type=str, choices=['mwf', 'lru'], default='mwf')
-parser.add_argument('--dataset', '-ds', type=str, choices=['leval', 'longbench', 'LooGLE'], default='leval')
+parser.add_argument('--dataset', '-ds', type=str, choices=['leval', 'longbench', 'LooGLE'], default='longbench')
 parser.add_argument('--use_model_output', '-mo', action='store_true', help='是否要启用模型生成的输出')
 parser.add_argument('--model_output_file', '-mf', type=str, default=None, help='deepseek生成的输出jsonl文件路径')
 args = parser.parse_args()
 
 # 根据dataset参数选择路径前缀
 if args.dataset == 'leval':
-    dataset_dir = f"{BASE_DIR}/Four-LEval-data"
+    dataset_dir = f"{BASE_DIR}/LEval-data"
     dataset_prefix = "LEval"
 elif args.dataset == 'longbench':
     dataset_dir = f"{BASE_DIR}/Longbench"
@@ -34,11 +33,10 @@ elif args.dataset == 'longbench':
 else:
     raise ValueError(f"Unknown dataset: {args.dataset}")
 
-
-input_file_name = f'./{dataset_prefix.lower()}_data/1_outputs_q{args.qps}_d{args.div}.csv'
-output_file_name = f"./{dataset_prefix}_simulator_{args.policy}_qps{args.qps}_div{args.div}_P75_slope40.jsonl"
-df = pd.read_csv(input_file_name)
-model = "LargeWorldModel/LWM-Text-1M"
+input_file = f'./{dataset_prefix.lower()}_data/outputs_gamma_qps5_CV0.25_70B_0.04_subset.csv'
+output_file_name = f"/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/correct_results/300_longbench_minexp_70B_overall_qps0.04_frac5_CV0.25_gamma_661/{dataset_prefix}_simulator_minexp_300_overall_qps0.04_frac5_CV0.25_P99_grad40_gamma_latter_70B.jsonl"
+df = pd.read_csv(input_file)
+model = "meta-llama/Llama-3.1-70B-Instruct"
 tokenizer = AutoTokenizer.from_pretrained(model)
 
 # load datasets

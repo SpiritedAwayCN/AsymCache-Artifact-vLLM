@@ -10,11 +10,12 @@ export TRANSFORMERS_OFFLINE=1
 export VLLM_USE_V1=0
 export VLLM_USE_POD_ATTN=1
 # export VLLM_SCHEDULE_ONE_PREFILL=1
-export USE_MINEXP=1
-export MINEXP_A=0.0
-export MINEXP_B=-1.741882e+03
-export MINEXP_ALPHA=1.695650e+04
-export MINEXP_BETA=4.239124e+02
+export USE_MINEXP=2
+export MINEXP_A=0
+# export MINEXP_B=-5.108343e+02
+# export MINEXP_ALPHA=1.821221e+03
+# export MINEXP_BETA=4.553053e+01
+export SCHEDULE_LOG_PATH="300_minexp_qps0.02_div20_P75_grad40_schedule.log"
 export VLLM_EVICTOR_POLICY=mwf
 export VLLM_LOGGING_LEVEL=INFO
 # export CUDA_LAUNCH_BLOCKING=1
@@ -51,7 +52,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm
     --max-model-len 450000 \
     --max_num_batched_tokens 8192 \
     --gpu-memory-utilization 0.8 \
-    > new_mwf_qps0.02_div40_P90_slope40_server_output.log &
+    > 300_minexp_qps0.02_div20_P75_grad40_server_output.log 2>&1 &
     # --collect_detailed_traces all \
     # --enforce-eager \
 
@@ -67,7 +68,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm
 
 # wait until prefill and decode instances are ready
 sleep 45
-# wait_for_server 8147
+wait_for_server 8048
 
 # launch a proxy server that opens the service at port 8000
 # the workflow of this proxy:
@@ -105,16 +106,19 @@ sleep 45
 # echo "Successfully finished 2 test requests!"
 # echo ""
 # 信号处理函数（空函数，仅用于中断 sleep）
-handle_interrupt() {
-    : # 空操作
-}
+# handle_interrupt() {
+#     : # 空操作
+# }
 
-# 捕获 SIGINT 信号
-trap handle_interrupt SIGINT
+# # 捕获 SIGINT 信号
+# trap handle_interrupt SIGINT
 
 # 等待用户按下 Ctrl+C
-echo "请按 Ctrl+C 结束执行..."
-sleep infinity
+# echo "请按 Ctrl+C 结束执行..."
+
+python interface.py
+
+# sleep infinity
 # Cleanup commands, suppressing their output
 ps -e | grep pt_main_thread | awk '{print $1}' | xargs kill -9 > /dev/null 2>&1
 pkill -f python > /dev/null 2>&1

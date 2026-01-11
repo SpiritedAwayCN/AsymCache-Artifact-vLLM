@@ -1,1 +1,4 @@
 *.jsonl
+*.csv
+*.png
+*.log

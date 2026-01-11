@@ -15,7 +15,7 @@ vllm_host_ip = os.popen("hostname -I | awk '{print $1}'").read().strip()
 API_URL = f'http://{vllm_host_ip}:8048/v1/completions'
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--div', '-d', type=int, default=40)
+parser.add_argument('--div', '-d', type=int, default=20)
 parser.add_argument('--qps', '-q', type=float, default=0.02)
 # parser.add_argument('--half_life', '-hl', type=int, default=40)
 parser.add_argument('--policy', '-p', type=str, choices=['mwf', 'lru'], default='mwf')
@@ -35,9 +35,9 @@ else:
     raise ValueError(f"Unknown dataset: {args.dataset}")
 
 
-input_file_name = f'./{dataset_prefix.lower()}_data/1_outputs_q{args.qps}_d{args.div}.csv'
-output_file_name = f"./{dataset_prefix}_simulator_{args.policy}_qps{args.qps}_div{args.div}_P90_slope40.jsonl"
-df = pd.read_csv(input_file_name)
+input_file = f'./{dataset_prefix.lower()}_data/new_outputs_q{args.qps}_d{args.div}.csv'
+output_file_name = f"./{dataset_prefix}_simulator_minexp_300_qps{args.qps}_div{args.div}_P75_grad40.jsonl"
+df = pd.read_csv(input_file)
 model = "LargeWorldModel/LWM-Text-1M"
 tokenizer = AutoTokenizer.from_pretrained(model)
 

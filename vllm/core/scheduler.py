@@ -7,7 +7,7 @@ import random
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Callable, Deque, Dict, Iterable, List, Optional
+from typing import Callable, Deque, Dict, Iterable, List, Optional, Any
 from typing import Sequence as GenericSequence
 from typing import Set, Tuple, Union
 
@@ -32,57 +32,72 @@ def detailed_info(self, message, *args, **kwargs):
         self._log(DETAILED_INFO, message, args, **kwargs)
 
 logging.Logger.detailed_info = detailed_info
-# logger.setLevel(logging.DEBUG)
+def init_schedule_logger(log_path: str = "new_schedule_detail.log") -> logging.Logger:
+    schedule_logger = logging.getLogger("schedule_detail_logger")
+    schedule_logger.propagate = False
+    schedule_logger.setLevel(DETAILED_INFO)
+    if not any(isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", "").endswith(log_path) for h in schedule_logger.handlers):
+        file_handler = logging.FileHandler(log_path, encoding="utf-8")
+        file_handler.setLevel(DETAILED_INFO)
+        file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+        schedule_logger.addHandler(file_handler)
+    return schedule_logger
 
-file_handler = logging.FileHandler('schedule_detail.log')
-file_handler.setLevel(DETAILED_INFO)
 
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-file_handler.setFormatter(formatter)
-logger.addHandler(file_handler)
+SCHEDULE_LOG_PATH = os.getenv("SCHEDULE_LOG_PATH", "schedule.log")
+schedule_logger = init_schedule_logger(SCHEDULE_LOG_PATH)
 
-def log_sequence_group_details(seq_groups: List['ScheduledSequenceGroup'], 
-                               group_type: str, 
-                               source: str = ""):
+
+def _seq_to_dict(seq, group_type: str) -> Dict[str, Any]:
+    d = {"seq_id": getattr(seq, "seq_id", None)}
+    if group_type == "prefill":
+        prompt_ids = getattr(seq, "prompt_token_ids", None)
+        d["prompt_tokens"] = len(prompt_ids) if prompt_ids is not None else 0
+    elif group_type == "decode":
+        try:
+            d["new_output_tokens"] = seq.get_output_len()
+        except Exception:
+            d["new_output_tokens"] = None
+    return d
+
+
+def _scheduled_group_to_dict(scheduled_group, group_type: str) -> Dict[str, Any]:
+    seq_group = scheduled_group.seq_group
+    seqs = getattr(seq_group, "seqs", []) or []
+    out: Dict[str, Any] = {
+        "request_id": getattr(seq_group, "request_id", None),
+        "num_seqs": len(seqs),
+        "seqs": [_seq_to_dict(s, group_type) for s in seqs],
+    }
+    if group_type == "prefill":
+        out["chunk_idx"] = getattr(seq_group, "chunk_idx", None)
+        out["chunk_size"] = getattr(scheduled_group, "token_chunk_size", None)
+
+    return out
+
+
+def _seq_groups_to_list(seq_groups, group_type: str) -> List[Dict[str, Any]]:
     if not seq_groups:
-        logger.detailed_info(f"没有{source}的{group_type} sequence groups")
-        return
+        return []
+    return [_scheduled_group_to_dict(g, group_type) for g in seq_groups]
+
+
+def log_all_sequence_groups_json(prefills, running_scheduled, swapped_in):
+    payload: Dict[str, Any] = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "prefill": {
+            "Prefills": _seq_groups_to_list(getattr(prefills, "seq_groups", None), "prefill"),
+            "Running":  _seq_groups_to_list(getattr(running_scheduled, "prefill_seq_groups", None), "prefill"),
+            "Swapped":  _seq_groups_to_list(getattr(swapped_in, "prefill_seq_groups", None), "prefill"),
+        },
+        "decode": {
+            "Running": _seq_groups_to_list(getattr(running_scheduled, "decode_seq_groups", None), "decode"),
+            "Swapped": _seq_groups_to_list(getattr(swapped_in, "decode_seq_groups", None), "decode"),
+        },
+    }
     
-    # logger.detailed_info("=" * 80)
-    # logger.detailed_info(f"{source.upper()} - {group_type.upper()} SequenceGroups:")
-    # logger.detailed_info("=" * 80)
-
-    for group_idx, scheduled_group in enumerate(seq_groups):
-        seq_group = scheduled_group.seq_group
-        chunksize = scheduled_group.token_chunk_size
-        logger.detailed_info(f"{group_type.upper()} Group [{group_idx + 1}/{len(seq_groups)}] - {source}:")
-
-        if seq_group.seqs:
-            logger.detailed_info(f"  Request ID: {seq_group.request_id}, 包含 {len(seq_group.seqs)} 个序列:")
-            for seq_idx, seq in enumerate(seq_group.seqs):
-                if group_type == 'prefill':
-                    chunk_idx = seq_group.chunk_idx
-                    prompt_tokens = len(seq.prompt_token_ids) if hasattr(seq, 'prompt_token_ids') else 0
-                    logger.detailed_info(f"    Seq [{seq_idx + 1}], Seq ID: {seq.seq_id}, Prompt tokens: {prompt_tokens}, Chunk idx: {chunk_idx}, Chunk size: {chunksize}")
-                if group_type == 'decode':
-                    output_tokens = seq.get_output_len()
-                    logger.detailed_info(f"    Seq [{seq_idx + 1}], Seq ID: {seq.seq_id}, New output tokens: {output_tokens}")
-
-def log_all_sequence_groups(prefills, running_scheduled, swapped_in):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    logger.detailed_info("")
-    logger.detailed_info(f"调度时间: {timestamp}")
-
-    # Prefill groups
-    logger.detailed_info("PREFILL 序列组:")
-    log_sequence_group_details(prefills.seq_groups, 'prefill', 'Prefills')
-    log_sequence_group_details(running_scheduled.prefill_seq_groups, 'prefill', 'Running')
-    log_sequence_group_details(swapped_in.prefill_seq_groups, 'prefill', 'Swapped')
-    
-    # Decode groups
-    logger.detailed_info("DECODE 序列组:")
-    log_sequence_group_details(running_scheduled.decode_seq_groups, 'decode', 'Running')
-    log_sequence_group_details(swapped_in.decode_seq_groups, 'decode', 'Swapped')
+    import json
+    schedule_logger.detailed_info(json.dumps(payload, ensure_ascii=False))
 
 # Test-only. If configured, decode is preempted with
 # ARTIFICIAL_PREEMPTION_PROB% probability.
@@ -1694,7 +1709,7 @@ class Scheduler:
                                (all_prefills
                                 and not self.scheduler_config.is_multi_step)
                                else running_scheduled.num_lookahead_slots)
-        # log_all_sequence_groups(prefills, running_scheduled, swapped_in)
+        log_all_sequence_groups_json(prefills, running_scheduled, swapped_in)
         return SchedulerOutputs(
             scheduled_seq_groups=scheduled_seq_groups,
             num_prefill_groups=num_prefill_groups,

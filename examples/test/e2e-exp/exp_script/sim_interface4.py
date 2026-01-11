@@ -10,17 +10,16 @@ import pandas as pd
 from transformers import AutoTokenizer
 
 BASE_DIR = '/jizhicfs/marvinhjia/sca'
-AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=6 * 60 * 60)
+AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=150*60*60)
 vllm_host_ip = os.popen("hostname -I | awk '{print $1}'").read().strip()
 API_URL = f'http://{vllm_host_ip}:8048/v1/completions'
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--div', '-d', type=int, default=80)
-parser.add_argument('--qps', '-q', type=float, default=0.5)
-parser.add_argument('--half_life', '-hl', type=int, default=500)
-parser.add_argument('--policy', '-p', type=str, choices=['mwf', 'lru', 'lfu'], default='mwf')
-parser.add_argument('--dataset', '-ds', type=str, choices=['leval', 'longbench'], default='leval')
-parser.add_argument('--use_model_output', '-mo', action='store_true',help='是否要启用模型生成的输出')
+parser.add_argument('--q1', '-d', type=float, default=0.007)
+parser.add_argument('--q2', '-q', type=float, default=0.0007)
+parser.add_argument('--policy', '-p', type=str, choices=['mwf', 'lru'], default='mwf')
+parser.add_argument('--dataset', '-ds', type=str, choices=['leval', 'longbench', 'LooGLE'], default='longbench')
+parser.add_argument('--use_model_output', '-mo', action='store_true', help='是否要启用模型生成的输出')
 parser.add_argument('--model_output_file', '-mf', type=str, default=None, help='deepseek生成的输出jsonl文件路径')
 args = parser.parse_args()
 
@@ -34,12 +33,10 @@ elif args.dataset == 'longbench':
 else:
     raise ValueError(f"Unknown dataset: {args.dataset}")
 
-
-input_file_name = f'./{dataset_prefix.lower()}_data/outputs_q{args.qps}_d{args.div}.csv'
-output_file_name = f"{dataset_prefix}_simulator_{args.policy}_qps{args.qps}_div{args.div}_h{args.half_life}.jsonl"
-
-df = pd.read_csv(input_file_name)
-model = "LargeWorldModel/LWM-Text-1M"
+input_file = f'./{dataset_prefix.lower()}_data/outputs_gamma_qps10_CV0.25_70B_0.04_subset.csv'
+output_file_name = f"/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/correct_results/300_longbench_lru_70B_overall_qps0.04_frac10_CV0.25_gamma_661/{dataset_prefix}_simulator_lru_300_overall_qps0.04_frac10_CV0.25_h0_gamma_latter_70B.jsonl"
+df = pd.read_csv(input_file)
+model = "meta-llama/Llama-3.1-70B-Instruct"
 tokenizer = AutoTokenizer.from_pretrained(model)
 
 # load datasets
@@ -51,7 +48,7 @@ for jsonl_file in glob.glob(f"{dataset_dir}/**/*.jsonl", recursive=True):
             file_name = os.path.basename(jsonl_file)
             if file_name not in datasets:
                 datasets[file_name] = []
-            datasets[file_name].append(data)
+            datasets[file_name].append(data)  
 
 # 加载deepseek的输出
 model_outputs = {}
@@ -75,12 +72,6 @@ def generate_prompt_and_answer(conversations):
     return prompt, answer_token_ids
 
 
-def load_requests_from_csv(file_path):
-    df = pd.read_csv(file_path)
-    df['Timestamp'] = pd.to_datetime(df['Timestamp'], unit='s')  # 转换为日期时间格式
-    return df
-
-
 def prepare_requests():
     for _, row in df.iterrows():
         file_name, line_number, turn_id = row['Dataset Name'], row['Data Index'], row['Turn']
@@ -102,16 +93,16 @@ def prepare_requests():
 
         prompt, answer = generate_prompt_and_answer(msgs2)
         timestamp = row['Timestamp']
-        yield timestamp, prompt, answer
+        yield timestamp, prompt, answer, file_name, line_number, turn_id
 
 
-async def fetch(prompt, answer, output_file):
+async def fetch(prompt, answer, output_file, file_name, line_number, turn_id):
     async with aiohttp.ClientSession(timeout=AIOHTTP_TIMEOUT) as session:
         payload = {
             "model": model,
             "prompt": prompt,
             "std_output_tokens": answer,
-            "max_tokens": 8192,
+            "max_tokens": 16000,
         }
         headers = {
             "Content-Type": "application/json",
@@ -119,6 +110,11 @@ async def fetch(prompt, answer, output_file):
         
         async with session.post(API_URL, json=payload, headers=headers) as response:
             response_json = await response.json()
+            response_json.update({
+                "file": file_name,
+                "line": line_number,
+                "turn": turn_id
+            })
             output_file.write(json.dumps(response_json) + '\n')
         
         output_file.flush()
@@ -128,7 +124,7 @@ async def schedule_request(output_file):
     tasks = []
     first_time = -1
     
-    for timestamp, prompt, answer in tqdm.tqdm(prepare_requests(), total=len(df)):
+    for timestamp, prompt, answer, file_name, line_number, turn_id in tqdm.tqdm(prepare_requests(), total=len(df)):
         now = time.time()
         if first_time == -1:
             first_time = now
@@ -138,12 +134,12 @@ async def schedule_request(output_file):
         
         if timestamp > now:
             await asyncio.sleep(timestamp - now)
-        task = asyncio.create_task(fetch(prompt, answer, output_file))
+        task = asyncio.create_task(fetch(prompt, answer, output_file, file_name, line_number, turn_id))
         tasks.append(task)
     
     await asyncio.gather(*tasks)
 
 
 if __name__ == '__main__':
-    with open(output_file_name, 'w') as output_file:
+    with open(output_file_name, 'a') as output_file:
         asyncio.run(schedule_request(output_file))

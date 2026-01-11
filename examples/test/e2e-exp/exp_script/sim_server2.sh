@@ -4,18 +4,19 @@
 # and then transfer the KV cache between them.
 
 export VLLM_HOST_IP=$(hostname -I | awk '{print $1}')
-export VLLM_PORT=12349
+export VLLM_PORT=12355
 export VLLM_ALLOW_DEPRECATED_BLOCK_MANAGER_V1=1 
 export TRANSFORMERS_OFFLINE=1
 export VLLM_USE_V1=0
 export VLLM_USE_POD_ATTN=1
 # export VLLM_SCHEDULE_ONE_PREFILL=1
-export USE_MINEXP=1
-export MINEXP_A=0.0
-export MINEXP_B=-1.017932e+03
-export MINEXP_ALPHA=3.629119e+03
-export MINEXP_BETA=9.072798e+01
-export VLLM_EVICTOR_POLICY=mwf
+export USE_MINEXP=2
+export MINEXP_A=0
+export MINEXP_B=-5.380516e+02
+export MINEXP_ALPHA=5.214913e+04
+export MINEXP_BETA=1.303728e+03
+export SCHEDULE_LOG_PATH="/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/correct_results/300_longbench_lru_70B_overall_qps0.04_frac5_CV0.25_gamma_661/300_latter_gamma_70B_lru_overall_qps0.04_frac5_CV0.25_h0_schedule.log"
+export VLLM_EVICTOR_POLICY=lru
 export VLLM_LOGGING_LEVEL=INFO
 # export CUDA_LAUNCH_BLOCKING=1
 export HF_ENDPOINT=https://hf-mirror.com
@@ -39,9 +40,9 @@ wait_for_server() {
 }
 
 # prefilling instance, which is the KV producer
-CUDA_VISIBLE_DEVICES=0,1,2,3 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm/bin/python3 \
+CUDA_VISIBLE_DEVICES=4,5,6,7 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm/bin/python3 \
     -m vllm.entrypoints.openai.api_server \
-    --model LargeWorldModel/LWM-Text-1M \
+    --model meta-llama/Llama-3.1-70B-Instruct \
     -tp 4 \
     --port 8048 \
     --block-size 64 \
@@ -51,7 +52,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm
     --max-model-len 450000 \
     --max_num_batched_tokens 8192 \
     --gpu-memory-utilization 0.8 \
-    > new_mwf_qps0.02_div40_P75_slope40_server_output.log &
+    > 300_latter_gamma_70B_lru_overall_qps0.04_frac5_CV0.25_h0_server_output.log 2>&1 &
     # --collect_detailed_traces all \
     # --enforce-eager \
 
