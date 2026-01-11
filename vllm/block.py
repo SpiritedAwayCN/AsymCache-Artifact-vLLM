@@ -7,6 +7,7 @@ from vllm.sequence import Sequence, SequenceGroup
 import os
 import math
 
+USE_PENSIEVE = os.environ.get('VLLM_EVICTOR_POLICY', 'lru') == 'pensieve'
 _use_minexp = int(os.environ.get('USE_MINEXP', 0))
 _minexp_A = os.environ.get('MINEXP_A', 10)
 _minexp_alpha = os.environ.get('MINEXP_ALPHA', 1)
@@ -97,6 +98,8 @@ class PhysicalTokenBlock:
                 exp2 *= MINEXP_BETA ** (now - self.last_accessed)
                 exp2 += MINEXP_B
                 self.total_count = (exp1, exp2)
+            elif USE_PENSIEVE:
+                self.total_count += 1
             else:
                 self.total_count *= BASE_FREQ ** (now - self.last_accessed)
                 self.total_count += count
@@ -108,6 +111,8 @@ class PhysicalTokenBlock:
                 return min(self.total_count)
             d = now - self.last_accessed
             return min(exp1 * (MINEXP_ALPHA ** d), exp2 * (MINEXP_BETA ** d))
+        elif USE_PENSIEVE:
+            return self.total_count
         else:
             return self.total_count * \
                 (1 if now is None else BASE_FREQ ** (now - self.last_accessed))

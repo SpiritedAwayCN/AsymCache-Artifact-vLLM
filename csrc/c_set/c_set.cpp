@@ -62,11 +62,99 @@ struct Item2Comparator {
     }
 };
 
+class c_list {
+    std::vector<Item> v;
+    std::vector<Item>::iterator min_ptr;
+    ItemComparator cmp;
+    T1 base;
+    void _get_min() {
+        min_ptr = v.end();
+        for (auto p = v.begin(); p != v.end(); ++p)
+            if (min_ptr == v.end() || cmp(*p, *min_ptr))
+                min_ptr = p;
+    }
+public:
+    c_list(T1 b): cmp(b, 1e-9), base(b) {}
+    void insert(T1 weight, T1 last_accessed, T3 hash) {
+        v.emplace_back(weight, last_accessed, hash);
+    }
+    void erase(T1 weight, T1 last_accessed, T3 hash) {
+        Item it(weight, last_accessed, hash);
+        for (auto p = v.begin(); p != v.end(); ++p)
+            if (!cmp(*p, it) && !cmp(it, *p)) {
+                v.erase(p);
+                return;
+            }
+        std::ostringstream oss;
+        oss << "Item not found in c_list : " << weight << " " << last_accessed << " " << hash;
+        throw std::runtime_error(oss.str());
+    }
+    T3 pop_min() {
+        _get_min();
+        assert(min_ptr != v.end());
+        T3 hash = min_ptr->hash;
+        v.erase(min_ptr);
+        return hash;
+    }
+    std::pair<T1, T1> min() {
+        _get_min();
+        assert(min_ptr != v.end());
+        return std::make_pair(min_ptr->weight, min_ptr->last_accessed);
+    }
+    T3 size() {
+        return static_cast<T3>(v.size());
+    }
+};
+
+class c_list_with_num {
+    std::vector<Item2> v;
+    std::vector<Item2>::iterator min_ptr;
+    Item2Comparator cmp;
+    T1 base;
+    void _get_min() {
+        min_ptr = v.end();
+        for (auto p = v.begin(); p != v.end(); ++p)
+            if (min_ptr == v.end() || cmp(*p, *min_ptr))
+                min_ptr = p;
+    }
+public:
+    c_list_with_num(T1 b): cmp(b, 1e-9), base(b) {}
+    void insert(T1 weight, T1 last_accessed, T3 hash, T3 num_hashed_token) {
+        v.emplace_back(weight, last_accessed, hash, num_hashed_token);
+    }
+    void erase(T1 weight, T1 last_accessed, T3 hash, T3 num_hashed_token) {
+        Item2 it(weight, last_accessed, hash, num_hashed_token);
+        for (auto p = v.begin(); p != v.end(); ++p)
+            if (!cmp(*p, it) && !cmp(it, *p)) {
+                v.erase(p);
+                return;
+            }
+        std::ostringstream oss;
+        oss << "Item not found in c_list_with_num : " << weight << " " << last_accessed << " " << hash;
+        throw std::runtime_error(oss.str());
+    }
+    T3 pop_min() {
+        _get_min();
+        assert(min_ptr != v.end());
+        T3 hash = min_ptr->hash;
+        v.erase(min_ptr);
+        return hash;
+    }
+    std::pair<T1, T1> min() {
+        _get_min();
+        assert(min_ptr != v.end());
+        return std::make_pair(min_ptr->weight, min_ptr->last_accessed);
+    }
+    T3 size() {
+        return static_cast<T3>(v.size());
+    }
+};
+
 class c_set {
     std::set<Item, ItemComparator> s;
     T1 base;
 public:
-    c_set(T1 base) : base(base), s(ItemComparator(base, 1e-9)) {}
+    c_set(T1 b) : s(ItemComparator(b, 1e-9)), base(b) {}
     void insert(T1 weight, T1 last_accessed, T3 hash) {
         s.emplace(weight, last_accessed, hash);
     }
@@ -110,7 +198,7 @@ class c_set2 {
     std::set<Item2, Item2Comparator> s;
     T1 base;
 public:
-    c_set2(T1 b) : base(base), s(Item2Comparator(base, 1e-9)) {}
+    c_set2(T1 b) : s(Item2Comparator(b, 1e-9)), base(b) {}
     void insert(T1 weight, T1 last_accessed, T3 hash, T3 num_hashed_token) {
         s.emplace(weight, last_accessed, hash, num_hashed_token);
     }
@@ -276,6 +364,23 @@ PYBIND11_MODULE(c_set, m) {
         .def("first", &c_set2::first)
         .def("pop_first", &c_set2::pop_first)
         .def("size", &c_set2::size);
+    
+    py::class_<c_list>(m, "c_list")
+        .def(py::init<T1>())
+        .def("insert", &c_list::insert)
+        .def("erase", &c_list::erase)
+        .def("min", &c_list::min)
+        .def("pop_min", &c_list::pop_min)
+        .def("size", &c_list::size);
+    
+    py::class_<c_list_with_num>(m, "c_list_with_num")
+        .def(py::init<T1>())
+        .def("insert", &c_list_with_num::insert)
+        .def("erase", &c_list_with_num::erase)
+        .def("min", &c_list_with_num::min)
+        .def("pop_min", &c_list_with_num::pop_min)
+        .def("size", &c_list_with_num::size);
+
 
     // py::class_<c_set_tanh>(m, "c_set_tanh")
     //     .def(py::init<T1, T1>())

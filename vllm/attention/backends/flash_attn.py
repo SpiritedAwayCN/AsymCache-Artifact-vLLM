@@ -42,7 +42,8 @@ from vllm.vllm_flash_attn import flash_attn_varlen_2seg_func as _flash_attn_varl
 from vllm.vllm_flash_attn import flash_attn_with_kvcache as _flash_attn_with_kvcache
 
 import os
-use_pod_attn = os.getenv('VLLM_USE_POD_ATTN') == '1'
+use_pod_attn = os.getenv('VLLM_USE_POD_ATTN', '0') == '1'
+VLLM_SPLIT_NSEG = os.getenv('VLLM_SPLIT_NSEG', '0') == '1'
 import pod_attn
 
 logger = init_logger(__name__)
@@ -891,6 +892,7 @@ class FlashAttentionImpl(AttentionImpl):
         kv_cache: torch.Tensor,
         attn_metadata: FlashAttentionMetadata,
         output: Optional[torch.Tensor] = None,
+        is_split: bool = False,
     ) -> torch.Tensor:
         """Forward pass with FlashAttention.
 
@@ -1002,96 +1004,75 @@ class FlashAttentionImpl(AttentionImpl):
         # if prefill_meta:
         #     print(f"firstseg={prefill_meta.seq_lens_firstseg}")
         #     print(f"flash_attn:987 before.q_p={query.shape},q_d={decode_meta is not None}")
+        if VLLM_SPLIT_NSEG and not is_split:
+            assert prefill_meta.blocks_in_batch.shape[0] == 1, "split nseg only supports one prefill."
+            prefill_tokens = attn_metadata.num_prefill_tokens
+            decode_tokens = attn_metadata.num_decode_tokens
+            
         if use_pod_attn and prefill_meta and not (kv_cache.numel() == 0 or prefill_meta.block_tables is None
                 or prefill_meta.block_tables.numel() == 0): # not profiling
-            if prefill_meta is None:
-                k_p = None
-                v_p = None
-                cu_seqlens_q_p = None
-                max_seqlen_q_p = None
-                cu_seqlens_k_p = None
-                max_seqlen_k_p = None
-                block_table_p = None
+            k_p = key_cache
+            v_p = value_cache
+            cu_seqlens_q_p = prefill_meta.query_start_loc
+            max_seqlen_q_p = prefill_meta.max_query_len
+            cu_seqlens_k_p = prefill_meta.seq_lens_tensor
+            max_seqlen_k_p = max(prefill_meta.seq_lens)
+            block_table_p = prefill_meta.block_tables
+            if decode_meta is not None:
+                tmp1, tmp2 = pod_attn.true_fused_nseg_attn_varlen_func(
+                    query,
+                    k_p,
+                    v_p,
+                    decode_query if decode_meta else None,
+                    key_cache if decode_meta else None,
+                    value_cache if decode_meta else None,
+                    cu_seqlens_q_p = cu_seqlens_q_p,
+                    max_seqlen_q_p = max_seqlen_q_p,
+                    cu_seqlens_k_p = cu_seqlens_k_p,
+                    max_seqlen_k_p = max_seqlen_k_p,
+                    cu_seqlens_q_d = decode_meta.query_start_loc if decode_meta else None,
+                    max_seqlen_q_d = decode_meta.max_decode_query_len if decode_meta else None,
+                    seqused_k_d = decode_meta.seq_lens_tensor if decode_meta else None,
+                    max_seqlen_k_d = decode_meta.max_decode_seq_len if decode_meta else None,
+                    block_table_p = block_table_p,
+                    block_table_d = decode_meta.block_tables if decode_meta else None,
+                    softmax_scale = softmax_scale,
+                    causal=True,
+                    window_size=window_size,
+                    alibi_slopes=alibi_slopes,
+                    softcap=logits_soft_cap,
+                    # out_prefill = prefill_output,
+                    # out_decode = decode_output,
+                    seqlens_q_block_p=prefill_meta.seqlens_q_block if prefill_meta else None,
+                    seqused_k_block_p=prefill_meta.seqused_k_block if prefill_meta else None,
+                    blocks_in_batch_p=prefill_meta.blocks_in_batch if prefill_meta else None,
+                )
+                output[:num_prefill_query_tokens].copy_(tmp1)
+                if decode_output is not None:
+                    output[num_prefill_query_tokens:].copy_(tmp2)
+                return output
             else:
-            # elif not (kv_cache is None or kv_cache.numel() == 0 or prefill_meta.block_tables is None
-            #         or prefill_meta.block_tables.numel() == 0):
-                k_p = key_cache
-                v_p = value_cache
-                cu_seqlens_q_p = prefill_meta.query_start_loc
-                max_seqlen_q_p = prefill_meta.max_query_len
-                cu_seqlens_k_p = prefill_meta.seq_lens_tensor
-                max_seqlen_k_p = max(prefill_meta.seq_lens)
-                block_table_p = prefill_meta.block_tables
-            # else:
-            #     q_seq_start_loc, q_seq_len, k_seq_start_loc, k_seq_len = \
-            #         _get_query_key_seq_metadata(prefill_meta, True, attn_type)
-
-            #     k_p = key[:num_prefill_kv_tokens]
-            #     v_p = value[:num_prefill_kv_tokens]
-            #     cu_seqlens_q_p = q_seq_start_loc
-            #     cu_seqlens_k_p = k_seq_start_loc
-            #     max_seqlen_q_p = q_seq_len
-            #     max_seqlen_k_p = k_seq_len
-            #     block_table_p = None
-
-            # print("flash_attn:nseg_varlen_func")
-            # print(f"decode_meta:{decode_meta}")
-            # print(f"q_block={prefill_meta.seqlens_q_block}")
-            # print(f"k_block={prefill_meta.seqused_k_block}")
-            # if decode_meta and prefill_meta and prefill_meta.num_prefills > 1:
-            # # #     with open("/jizhicfs/marvinhjia/sca/pod_attn-dev/test/2.txt", "w") as f:
-            #     torch.cuda.synchronize()
-                # logger.debug(f"q_p={query.shape}")
-                # logger.debug(f"k_p={k_p.shape}")
-                # logger.debug(f"v_p={v_p.shape}")
-                # logger.debug(f"q_d={decode_query.shape}")
-                # logger.debug(f"k_d={key_cache.shape}")
-                # logger.debug(f"v_d={value_cache.shape}")
-                # logger.debug(f"cu_q_p={cu_seqlens_q_p}")
-                # logger.debug(f"mx_q_p={max_seqlen_q_p}")
-                # logger.debug(f"cu_k_p={cu_seqlens_k_p}")
-                # logger.debug(f"mx_k_p={max_seqlen_k_p}")
-                # logger.debug(f"cu_q_d={decode_meta.query_start_loc}")
-                # logger.debug(f"mx_q_d={decode_meta.max_decode_query_len}")
-                # logger.debug(f"cu_k_d={None}")
-                # logger.debug(f"mx_k_d={decode_meta.max_decode_seq_len}")
-                # logger.debug(f"block_table_p={block_table_p}")
-                # logger.debug(f"block_table_d={decode_meta.block_tables}")
-                # logger.debug(f"out_p={prefill_output.shape}")
-                # logger.debug(f"out_d={decode_output.shape}")
-                # logger.debug(f"seq_q_block={prefill_meta.seqlens_q_block}")
-                # logger.debug(f"seq_k_block={prefill_meta.seqused_k_block}")
-                # logger.debug(f"seqused_k_d={decode_meta.seq_lens_tensor if decode_meta else None}")
-            #         # exit(0)
-            pod_attn.true_fused_nseg_attn_varlen_func(
-                query,
-                k_p,
-                v_p,
-                decode_query if decode_meta else None,
-                key_cache if decode_meta else None,
-                value_cache if decode_meta else None,
-                cu_seqlens_q_p = cu_seqlens_q_p,
-                max_seqlen_q_p = max_seqlen_q_p,
-                cu_seqlens_k_p = cu_seqlens_k_p,
-                max_seqlen_k_p = max_seqlen_k_p,
-                cu_seqlens_q_d = decode_meta.query_start_loc if decode_meta else None,
-                max_seqlen_q_d = decode_meta.max_decode_query_len if decode_meta else None,
-                seqused_k_d = decode_meta.seq_lens_tensor if decode_meta else None,
-                max_seqlen_k_d = decode_meta.max_decode_seq_len if decode_meta else None,
-                block_table_p = block_table_p,
-                block_table_d = decode_meta.block_tables if decode_meta else None,
-                softmax_scale = softmax_scale,
-                causal=True,
-                window_size=window_size,
-                alibi_slopes=alibi_slopes,
-                softcap=logits_soft_cap,
-                out_prefill = prefill_output,
-                out_decode = decode_output,
-                seqlens_q_block_p=prefill_meta.seqlens_q_block if prefill_meta else None,
-                seqused_k_block_p=prefill_meta.seqused_k_block if prefill_meta else None,
-                blocks_in_batch_p=prefill_meta.blocks_in_batch if prefill_meta else None,
-            )
-            return output
+                # nseg prefill
+                pod_attn.flash_attn_interface.flash_nseg_attn_varlen_func(
+                    query,
+                    k_p,
+                    v_p,
+                    max_seqlen_q=max_seqlen_q_p,
+                    cu_seqlens_q=cu_seqlens_q_p,
+                    max_seqlen_k=max_seqlen_k_p,
+                    cu_seqlens_k=cu_seqlens_k_p,
+                    block_table=block_table_p,
+                    softmax_scale = softmax_scale,
+                    causal=True,
+                    window_size=window_size,
+                    alibi_slopes=alibi_slopes,
+                    softcap=logits_soft_cap,
+                    out=prefill_output,
+                    seqlens_q_block=prefill_meta.seqlens_q_block,
+                    seqused_k_block=prefill_meta.seqused_k_block,
+                    blocks_in_batch=prefill_meta.blocks_in_batch,
+                )
+                return output
 
         if prefill_meta := attn_metadata.prefill_metadata:
             # Prompt run.

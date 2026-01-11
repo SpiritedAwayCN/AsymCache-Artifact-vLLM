@@ -56,11 +56,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm
     # --collect_detailed_traces all \
     # --enforce-eager \
 
-# decoding instance, which is the KV consumer
-# VLLM_DISTRIBUTED_KV_ROLE=consumer CUDA_VISIBLE_DEVICES=2 python \
-#     -m vllm.entrypoints.openai.api_server \
 #     --model /home/tzl/huggingface/modelzoo/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659 \
-#     --port 8200 \
 #     --block-size 64 \
 #     --enable-prefix-caching \
 #     --max-model-len 10000 \
