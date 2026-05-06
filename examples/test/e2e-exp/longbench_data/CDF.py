@@ -22,7 +22,7 @@ csv_files = [
     # "outputs_q0.02_d40.csv",
     # "outputs_q0.02_d80.csv",
     # "outputs_q0.02_d160.csv",
-    "outputs_gamma_qps10_CV0.25_70B_0.04.csv",
+    "outputs_gamma_qps10_CV0.25_70B_0.01.csv",
 ]
 
 titles = [

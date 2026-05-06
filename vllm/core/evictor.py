@@ -3,6 +3,7 @@
 import enum
 import heapq
 import math
+import time
 from abc import ABC, abstractmethod
 from typing import Dict, List, Tuple, Optional, Union
 from vllm.logger import init_logger
@@ -532,7 +533,7 @@ class PensieveEvictor(Evictor):
         chosen = -1
         chosen_val = 0
         for blk_id in self.block_list:
-            blk_val = self.free_table[blk_id].func / self.free_table[blk_id].total_count
+            blk_val = self.free_table[blk_id].func / (time.time() - self.free_table[blk_id].last_accessed)
             if chosen == -1 or blk_val < chosen_val:
                 chosen = blk_id
                 chosen_val = blk_val
@@ -747,8 +748,8 @@ def make_evictor(eviction_policy: EvictionPolicy) -> Evictor:
         from vllm.core.block.common import BASE_FREQ, USE_MINEXP
         assert USE_MINEXP
         print("evictor:MWF_BS")
-        c = 1.8544166376320397
-        k = 7.411805757842883e-05
+        c = 16.975203511045493
+        k = 0.00043533405552524906
         from vllm.core.block.common import MINEXP_A, MINEXP_B, MINEXP_ALPHA, MINEXP_BETA
         return MWF_BSEvictor(MINEXP_A, MINEXP_B, MINEXP_ALPHA, MINEXP_BETA, lambda x: k * x + c)
     elif eviction_policy == EvictionPolicy.BS:
@@ -759,8 +760,10 @@ def make_evictor(eviction_policy: EvictionPolicy) -> Evictor:
         return BSEvictor(MINEXP_A, MINEXP_B, MINEXP_ALPHA, MINEXP_BETA)        
     elif eviction_policy == EvictionPolicy.PENSIEVE:
         print("evictor:PensieveEvictor")
-        c = 1.8544166376320397
-        k = 7.411805757842883e-05
+        c = 16.975203511045493
+        k = 0.00043533405552524906
+        # c = 6.556888133987368
+        # k = 0.0003838702301714223
         return PensieveEvictor(lambda x: k * x + c)
     else:
         raise ValueError(f"Unknown cache eviction policy: {eviction_policy}")

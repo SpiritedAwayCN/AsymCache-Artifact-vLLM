@@ -8,8 +8,8 @@ from timestamp import GammaRequestIntervalGenerator
 # BASE_DIR = '/jizhicfs/marvinhjia/sca/data_preprocess'
 # parser = argparse.ArgumentParser()
 # parser.add_argument('--seed', type=int, default=42)
-# parser.add_argument('--q1', type=float, default=0.0055)
-# parser.add_argument('--q2', type=float, default=0.0011)
+# parser.add_argument('--q1', type=float, default=0.0035)
+# parser.add_argument('--q2', type=float, default=0.00035)
 # parser.add_argument('--k1', type=float, default=16, help="gamma shape for inter-session intervals")
 # parser.add_argument('--k2', type=float, default=16, help="gamma shape for intra-session intervals")
 # args = parser.parse_args()
@@ -80,7 +80,7 @@ from timestamp import GammaRequestIntervalGenerator
 # # generator_inter = ConstantIntervalGenerator(qps=args.q1)
 # # generator_intra = ConstantIntervalGenerator(qps=args.q2)
 
-# df = pd.read_csv(os.path.join(BASE_DIR, 'seqlen_stat_LEval.csv'))
+# df = pd.read_csv(os.path.join(BASE_DIR, 'seqlen_stat_Longbench.csv'))
 # timestamp_col = []
 # inter_time_acc = 0.0
 # intra_time_acc = 0.0
@@ -117,7 +117,7 @@ from timestamp import GammaRequestIntervalGenerator
 # overall_qps = len(df) / df['Timestamp'].iloc[-1]
 # print(f"Overall QPS: {overall_qps:.4f}")
 # # 保存至最终的CSV文件
-# output_file = f"LEval_outputs_gamma_qps5_CV0.25_70B.csv"
+# output_file = f"outputs_gamma_qps10_CV0.25_8B_0.01.csv"
 # df.to_csv(output_file, index=False)
 # print(f"Output file saved to: {output_file}")
 
@@ -129,10 +129,10 @@ def rescale_qps(df, old_qps, new_qps, ts_col='Timestamp'):
     df_new = df_new.sort_values(by=ts_col).reset_index(drop=True)
     return df_new
 
-df = pd.read_csv('outputs_gamma_qps10_CV0.25_70B_0.01.csv')
+df = pd.read_csv('outputs_gamma_qps10_CV0.25_8B_0.01.csv')
 df_new = rescale_qps(df, old_qps=0.01, new_qps=0.04)
 overall_qps = len(df_new) / df_new['Timestamp'].iloc[-1]
 print(f"Overall QPS: {overall_qps:.4f}")
-output_file = f"outputs_gamma_qps10_CV0.25_70B_0.04.csv"
+output_file = f"outputs_gamma_qps10_CV0.25_8B_0.04.csv"
 df_new.to_csv(output_file, index=False)
 print(f"Output file saved to: {output_file}")

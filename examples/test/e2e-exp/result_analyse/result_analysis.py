@@ -130,21 +130,21 @@ def analyze_jsonl(file_path):
         "avg_tpot": avg_tpot,
         "avg_new_ttft": avg_new_ttft,
         "avg_new_tpot": avg_new_tpot,
+        "hit_total": hit_total,
+        "avg_ttft_hit": avg_ttft_hit,
+        "avg_new_ttft_hit": avg_new_ttft_hit,
         "avg_hit_rate": avg_hit_rate,
         "multi_cache_rate": multi_rate,
         "single_cache_rate": single_rate,
         "total_time": tpt,
         "throughput": throughput,
-        "hit_total": hit_total,
-        "avg_ttft_hit": avg_ttft_hit,
-        "avg_new_ttft_hit": avg_new_ttft_hit,
     }
 
 
 def summarize_folder(folder_path, output_csv="summary.csv"):
     results = []
     folder = Path(folder_path)
-    jsonl_files = [f for f in folder.rglob("*.jsonl") if f.name.startswith("Lo")]
+    jsonl_files = [f for f in folder.rglob("*.jsonl")]
     print(f"Found {len(jsonl_files)} .jsonl files to process\n")
     for file_path in jsonl_files:
         print(f"Processing {file_path.relative_to(folder)} ...")
@@ -161,8 +161,8 @@ def summarize_folder(folder_path, output_csv="summary.csv"):
         with open(output_csv, "a", newline="", encoding="utf-8") as csvf:
             writer = csv.DictWriter(csvf, fieldnames=[
                 "file", "total_items", "avg_tbt", "avg_ttft", "avg_tpot", "avg_new_ttft", "avg_new_tpot", 
-                "avg_hit_rate", "multi_cache_rate", "single_cache_rate", "total_time", "throughput", "hit_items", 
-                "avg_ttft_hit", "avg_new_ttft_hit"
+                "hit_items", "avg_ttft_hit", "avg_new_ttft_hit", "avg_hit_rate", "multi_cache_rate", 
+                "single_cache_rate", "total_time", "throughput"
             ])
             writer.writeheader()
             for r in results:
@@ -174,18 +174,18 @@ def summarize_folder(folder_path, output_csv="summary.csv"):
                     "avg_tpot": f"{r['avg_tpot']:.6f}",
                     "avg_new_ttft": f"{r['avg_new_ttft']:.6f}",
                     "avg_new_tpot": f"{r['avg_new_tpot']:.6f}",
+                    "hit_items": r["hit_total"],
+                    "avg_ttft_hit": f"{r['avg_ttft_hit']:.6f}",
+                    "avg_new_ttft_hit": f"{r['avg_new_ttft_hit']:.6f}",
                     "avg_hit_rate": f"{r['avg_hit_rate']:.4%}",
                     "multi_cache_rate": f"{r['multi_cache_rate']:.4%}",
                     "single_cache_rate": f"{r['single_cache_rate']:.4%}",
                     "total_time": f"{r['total_time']:.6f}",
                     "throughput": f"{r['throughput']:.6f}",
-                    "hit_items": r["hit_total"],
-                    "avg_ttft_hit": f"{r['avg_ttft_hit']:.6f}",
-                    "avg_new_ttft_hit": f"{r['avg_new_ttft_hit']:.6f}",
                 })
         print(f"\nSummary saved to {output_csv}")
 
 
 if __name__ == "__main__":
-    folder = "/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/correct_results/300_longbench_minexp_70B_overall_qps0.04_frac10_CV0.25_gamma_661"
+    folder = "/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/correct_results/300_longbench_pensieve_no_only_seg2_70B_overall_qps0.01_frac10_CV0.25_gamma"
     summarize_folder(folder, output_csv="summary.csv")

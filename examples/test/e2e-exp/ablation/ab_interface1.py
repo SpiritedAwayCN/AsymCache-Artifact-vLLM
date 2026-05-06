@@ -12,34 +12,38 @@ from transformers import AutoTokenizer
 BASE_DIR = '/jizhicfs/marvinhjia/sca'
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=150*60*60)
 vllm_host_ip = os.popen("hostname -I | awk '{print $1}'").read().strip()
-API_URL = f'http://{vllm_host_ip}:8048/v1/completions'
+API_URL = f'http://{vllm_host_ip}:8061/v1/completions'
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--q1', '-d', type=float, default=0.007)
-parser.add_argument('--q2', '-q', type=float, default=0.0007)
-parser.add_argument('--policy', '-p', type=str, choices=['mwf', 'lru'], default='mwf')
-parser.add_argument('--dataset', '-ds', type=str, choices=['leval', 'longbench', 'LooGLE'], default='longbench')
-parser.add_argument('--use_model_output', '-mo', action='store_true', help='是否要启用模型生成的输出')
-parser.add_argument('--model_output_file', '-mf', type=str, default=None, help='deepseek生成的输出jsonl文件路径')
+parser.add_argument('--frac', '-f', type=int, default=10)
+parser.add_argument('--qps', '-q', type=float, default=0.02)
+parser.add_argument('--output_file', '-o', type=str, default='output.jsonl', help='输出jsonl文件路径')
+parser.add_argument('--dataset', '-ds', type=str, choices=['leval', 'longbench', 'LooGLE'], default='LooGLE')
+parser.add_argument('--use_model_output', '-mo', type=bool, default=True, help='是否要启用模型生成的输出')
 args = parser.parse_args()
 
 # 根据dataset参数选择路径前缀
 if args.dataset == 'leval':
-    dataset_dir = f"{BASE_DIR}/LEval-data"
     dataset_prefix = "LEval"
+    dataset_dir = f"{BASE_DIR}/LEval-data"
+    model_output_file = "/jizhicfs/marvinhjia/sca/data_preprocess/leval_deepseek_results.jsonl"
 elif args.dataset == 'longbench':
-    dataset_dir = f"{BASE_DIR}/Longbench"
     dataset_prefix = "LongBench"
+    dataset_dir = f"{BASE_DIR}/Longbench"
+    model_output_file = "/jizhicfs/marvinhjia/sca/data_preprocess/longbench_deepseek_results.jsonl"
+elif args.dataset == 'LooGLE':
+    dataset_dir = f"{BASE_DIR}/LooGLE_merged"
+    dataset_prefix = "LooGLE"
+    model_output_file = "/jizhicfs/marvinhjia/sca/data_preprocess/loogle_deepseek_results.jsonl"
 else:
     raise ValueError(f"Unknown dataset: {args.dataset}")
 
-input_file = f'./{dataset_prefix.lower()}_data/outputs_gamma_qps10_CV0.25_70B_0.04_subset.csv'
-output_file_name = f"/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/correct_results/300_longbench_lru_70B_overall_qps0.04_frac10_CV0.25_gamma_661/{dataset_prefix}_simulator_lru_300_overall_qps0.04_frac10_CV0.25_h0_gamma_latter_70B.jsonl"
+input_file = f'./{dataset_prefix.lower()}_data/outputs_gamma_qps{args.frac}_CV0.25_8B_{args.qps}_subset.csv'
 df = pd.read_csv(input_file)
-model = "meta-llama/Llama-3.1-70B-Instruct"
+model = "meta-llama/Llama-3.1-8B-Instruct"
 tokenizer = AutoTokenizer.from_pretrained(model)
 
-# load datasets
+# load dataset
 datasets = {}
 for jsonl_file in glob.glob(f"{dataset_dir}/**/*.jsonl", recursive=True):
     with open(jsonl_file, 'r', encoding='utf-8') as file:
@@ -48,17 +52,17 @@ for jsonl_file in glob.glob(f"{dataset_dir}/**/*.jsonl", recursive=True):
             file_name = os.path.basename(jsonl_file)
             if file_name not in datasets:
                 datasets[file_name] = []
-            datasets[file_name].append(data)  
+            datasets[file_name].append(data)
 
 # 加载deepseek的输出
 model_outputs = {}
-if args.use_model_output and args.model_output_file:
-    with open(args.model_output_file, 'r', encoding='utf-8') as f:
+if args.use_model_output and model_output_file:
+    with open(model_output_file, 'r', encoding='utf-8') as f:
         for line in f:
             item = json.loads(line)
             key = (item['file'], item['line'], item['turn'])
             model_outputs[key] = item['generate_text']
-    print(f"[INFO] Loaded {len(model_outputs)} model-generated outputs from {args.model_output_file}")
+    print(f"[INFO] Loaded {len(model_outputs)} model-generated outputs from {model_output_file}")
 
 
 def generate_prompt_and_answer(conversations):
@@ -141,5 +145,5 @@ async def schedule_request(output_file):
 
 
 if __name__ == '__main__':
-    with open(output_file_name, 'a') as output_file:
+    with open(args.output_file, 'a') as output_file:
         asyncio.run(schedule_request(output_file))

@@ -9,56 +9,32 @@ import argparse
 import pandas as pd
 from transformers import AutoTokenizer
 
-BASE_DIR = '/jizhicfs/marvinhjia/sca'
-AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=150*60*60)
-vllm_host_ip = os.popen("hostname -I | awk '{print $1}'").read().strip()
-API_URL = f'http://{vllm_host_ip}:8048/v1/completions'
 
+vllm_host_ip = os.popen("hostname -I | awk '{print $1}'").read().strip()
+AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=150*60*60)
+API_URL = f'http://{vllm_host_ip}:8048/v1/completions'
 parser = argparse.ArgumentParser()
-parser.add_argument('--q1', '-d', type=float, default=0.007)
-parser.add_argument('--q2', '-q', type=float, default=0.0007)
-parser.add_argument('--policy', '-p', type=str, choices=['mwf', 'lru'], default='mwf')
-parser.add_argument('--dataset', '-ds', type=str, choices=['leval', 'longbench', 'LooGLE'], default='longbench')
-parser.add_argument('--use_model_output', '-mo', action='store_true', help='是否要启用模型生成的输出')
-parser.add_argument('--model_output_file', '-mf', type=str, default=None, help='deepseek生成的输出jsonl文件路径')
+parser.add_argument('--frac', '-f', type=int, default=10)
+parser.add_argument('--qps', '-q', type=float, default=1.00)
+parser.add_argument('--model_size', '-ms', type=str, choices=['8B', '70B'], default='70B')
 args = parser.parse_args()
 
-# 根据dataset参数选择路径前缀
-if args.dataset == 'leval':
-    dataset_dir = f"{BASE_DIR}/LEval-data"
-    dataset_prefix = "LEval"
-elif args.dataset == 'longbench':
-    dataset_dir = f"{BASE_DIR}/Longbench"
-    dataset_prefix = "LongBench"
-else:
-    raise ValueError(f"Unknown dataset: {args.dataset}")
 
-input_file = f'./{dataset_prefix.lower()}_data/outputs_gamma_qps5_CV0.25_70B_0.04_subset.csv'
-output_file_name = f"/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/correct_results/300_longbench_lru_70B_overall_qps0.04_frac5_CV0.25_gamma_661/{dataset_prefix}_simulator_lru_300_overall_qps0.04_frac5_CV0.25_h0_gamma_latter_70B.jsonl"
+input_file = "ShareGPT_outputs_gamma_qps10_CV0.25_70B_1.0.csv"
+output_file_name = f"/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/GPT_results/high_sharegpt_lru_70B_overall_qps1.00_frac10_CV0.25.jsonl"
 df = pd.read_csv(input_file)
-model = "meta-llama/Llama-3.1-70B-Instruct"
+model = "/jizhicfs/marvinhjia/sca/models/huggingface/hub/models--meta-llama--Llama-3.1-70B-Instruct/snapshots/1605565b47bb9346c5515c34102e054115b4f98b"
 tokenizer = AutoTokenizer.from_pretrained(model)
 
 # load datasets
 datasets = {}
-for jsonl_file in glob.glob(f"{dataset_dir}/**/*.jsonl", recursive=True):
-    with open(jsonl_file, 'r', encoding='utf-8') as file:
-        for line_number, line in enumerate(file):
-            data = json.loads(line)
-            file_name = os.path.basename(jsonl_file)
-            if file_name not in datasets:
-                datasets[file_name] = []
-            datasets[file_name].append(data)  
-
-# 加载deepseek的输出
-model_outputs = {}
-if args.use_model_output and args.model_output_file:
-    with open(args.model_output_file, 'r', encoding='utf-8') as f:
-        for line in f:
-            item = json.loads(line)
-            key = (item['file'], item['line'], item['turn'])
-            model_outputs[key] = item['generate_text']
-    print(f"[INFO] Loaded {len(model_outputs)} model-generated outputs from {args.model_output_file}")
+with open("/jizhicfs/marvinhjia/sca/sharegpt_500.jsonl", 'r', encoding='utf-8') as file:
+    file_name = "sharegpt"
+    for line_number, line in enumerate(file):
+        data = json.loads(line)
+        if file_name not in datasets:
+            datasets[file_name] = []
+        datasets[file_name].append(data)
 
 
 def generate_prompt_and_answer(conversations):
@@ -77,19 +53,11 @@ def prepare_requests():
         file_name, line_number, turn_id = row['Dataset Name'], row['Data Index'], row['Turn']
         data = datasets[file_name][line_number]
 
-        msgs2 = [{'role': 'user', 'content': data['input'] + '\n\n'}]
+        msgs2 = []
         for idx, question in enumerate(data['instructions'][:turn_id + 1]):
-            if args.use_model_output:
-                gen_key = (file_name, line_number, idx)
-                answer_text = model_outputs.get(gen_key, data['outputs'][idx])
-            else:
-                answer_text = data['outputs'][idx]
-            if idx == 0:
-                msgs2[0]['content'] += question
-                msgs2.append({'role': 'assistant', 'content': answer_text})            
-            else:
-                msgs2.append({'role': 'user', 'content': question})
-                msgs2.append({'role': 'assistant', 'content': answer_text})
+            answer_text = data['outputs'][idx]
+            msgs2.append({'role': 'user', 'content': question})
+            msgs2.append({'role': 'assistant', 'content': answer_text})
 
         prompt, answer = generate_prompt_and_answer(msgs2)
         timestamp = row['Timestamp']

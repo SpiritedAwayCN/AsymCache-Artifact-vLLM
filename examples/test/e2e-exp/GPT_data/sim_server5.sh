@@ -4,20 +4,19 @@
 # and then transfer the KV cache between them.
 
 export VLLM_HOST_IP=$(hostname -I | awk '{print $1}')
-export VLLM_PORT=12358
+export VLLM_PORT=12350
 export VLLM_ALLOW_DEPRECATED_BLOCK_MANAGER_V1=1 
 export TRANSFORMERS_OFFLINE=1
 export VLLM_USE_V1=0
 export VLLM_USE_POD_ATTN=1
 # export VLLM_SCHEDULE_ONE_PREFILL=1
-export USE_MINEXP=2
+export USE_MINEXP=0
 export MINEXP_A=0
-export MINEXP_B=-1.076103e+03
-export MINEXP_ALPHA=1.042983e+05
-export MINEXP_BETA=2.607456e+03
-export SCHEDULE_LOG_PATH="/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/correct_results/300_longbench_lru_70B_overall_qps0.04_frac10_CV0.25_gamma_661/300_latter_gamma_70B_lru_overall_qps0.04_frac10_CV0.25_h0_schedule.log"
+export MINEXP_B=-5.219893e+01
+export MINEXP_ALPHA=5.176348e+03
+export MINEXP_BETA=1.294087e+02
+export SCHEDULE_LOG_PATH="/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/GPT_results/low_sharegpt_lru_70B_overall_qps1.00_frac10_CV0.25_schedule.log"
 export VLLM_EVICTOR_POLICY=lru
-export VLLM_LOGGING_LEVEL=INFO
 # export CUDA_LAUNCH_BLOCKING=1
 export HF_ENDPOINT=https://hf-mirror.com
 export NCCL_ALGO=Ring
@@ -40,19 +39,20 @@ wait_for_server() {
 }
 
 # prefilling instance, which is the KV producer
-CUDA_VISIBLE_DEVICES=0,1,2,3 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm/bin/python3 \
+CUDA_VISIBLE_DEVICES=4,5,6,7 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm/bin/python3 \
     -m vllm.entrypoints.openai.api_server \
-    --model meta-llama/Llama-3.1-70B-Instruct \
+    --model /jizhicfs/marvinhjia/sca/models/huggingface/hub/models--meta-llama--Llama-3.1-70B-Instruct/snapshots/1605565b47bb9346c5515c34102e054115b4f98b \
     -tp 4 \
-    --port 8048 \
+    --port 8040 \
     --block-size 64 \
     --dtype float16 \
     --enable-prefix-caching \
     --enable-chunked-prefill \
-    --max-model-len 450000 \
+    --max-model-len 55000 \
+    --num-gpu-blocks-override 1000 \
     --max_num_batched_tokens 8192 \
     --gpu-memory-utilization 0.8 \
-    > 300_latter_gamma_70B_lru_overall_qps0.04_frac10_CV0.25_h0_server_output.log &
+    > low_sharegpt_70B_lru_overall_qps1.00_frac10_CV0.25_server_output.log 2>&1 &
     # --collect_detailed_traces all \
     # --enforce-eager \
 
@@ -117,5 +117,5 @@ trap handle_interrupt SIGINT
 echo "请按 Ctrl+C 结束执行..."
 sleep infinity
 # Cleanup commands, suppressing their output
-ps -e | grep pt_main_thread | awk '{print $1}' | xargs kill -9 > /dev/null 2>&1
-pkill -f python > /dev/null 2>&1
+# ps -e | grep pt_main_thread | awk '{print $1}' | xargs kill -9 > /dev/null 2>&1
+# pkill -f python > /dev/null 2>&1

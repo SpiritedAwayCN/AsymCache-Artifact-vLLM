@@ -2,8 +2,8 @@
 # import json
 # import math
 
-jsonl_file_path = '/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/LongBench_simulator_minexp_full_qps0.007_0.0007_CV0.25_P99_grad40_gamma.jsonl'
-csv_file_path = 'outputs_gamma_qps10_CV0.25_70B.csv'
+jsonl_file_path = '/jizhicfs/marvinhjia/sca/yilin/old-exps/LongBench_7B/LongBench_simulator_minexp_full_qps0.007_0.0007_CV0.25_P99_grad40_gamma.jsonl'
+csv_file_path = 'outputs_gamma_qps10_CV0.25_8B_0.04.csv'
 BLOCK_SIZE = 64
 
 # def calculate_interfering_blocks():
@@ -212,7 +212,7 @@ x_axis = range(1, len(df) + 1)
 y_axis = df['gap_blocks']
 # 绘制散点
 plt.scatter(x_axis, y_axis, s=15, alpha=0.7, label='Gap Blocks')
-plt.axhline(y=7893, color='red', linestyle='--', linewidth=2, label='Cache Capacity (7893 Blocks)')
+plt.axhline(y=7621, color='red', linestyle='--', linewidth=2, label='Cache Capacity (7621 Blocks)')
 ax = plt.gca()
 ax.xaxis.set_major_locator(ticker.MultipleLocator(20))
 plt.xticks(rotation=45, fontsize=8)
@@ -223,6 +223,6 @@ plt.legend()
 plt.grid(True, linestyle=':', alpha=0.6)
 plt.xlim(0, len(df) + 20)
 plt.tight_layout()
-output_path = "scatter_gamma_qps10_CV0.25_70B_0.023.png"
+output_path = "scatter_gamma_qps10_CV0.25_8B_0.04.png"
 plt.savefig(output_path, dpi=300)
 print(f"已保存到: {output_path}")

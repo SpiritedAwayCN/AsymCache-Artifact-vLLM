@@ -1,7 +1,7 @@
 import pandas as pd
 
 # 读取CSV文件
-df = pd.read_csv('/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/longbench_data/outputs_gamma_qps5_CV0.25_70B_0.04.csv')
+df = pd.read_csv('/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/longbench_data/outputs_gamma_qps10_CV0.25_8B_0.04.csv')
 
 # 检查数据形状
 print(f"数据总行数: {len(df)}")
@@ -22,6 +22,6 @@ print(f"提取了 {len(df_subset)} 条数据")
 print(f"时间戳基准值: {base_timestamp}")
 
 # 保存为新的CSV文件
-output_filename = 'outputs_gamma_qps5_CV0.25_70B_0.04_subset.csv'
+output_filename = 'outputs_gamma_qps10_CV0.25_8B_0.04_subset.csv'
 df_subset.to_csv(output_filename, index=False)
 print(f"\n已保存为: {output_filename}")
