@@ -96,7 +96,9 @@ def log_all_sequence_groups_json(prefills, running_scheduled, swapped_in):
             "Swapped": _seq_groups_to_list(getattr(swapped_in, "decode_seq_groups", None), "decode"),
         },
     }
-    
+    prefill_debug = getattr(prefills, "debug_info", None)
+    if prefill_debug is not None:
+        payload["prefill_debug"] = prefill_debug
     import json
     schedule_logger.detailed_info(json.dumps(payload, ensure_ascii=False))
 
@@ -1209,6 +1211,28 @@ class Scheduler:
 
         blocks_to_offload: List[Tuple[int, int, bool]] = []
 
+        def _safe_prompt_tokens(seq_group: Optional[SequenceGroup]) -> Optional[int]:
+            if seq_group is None:
+                return None
+            try:
+                return seq_group.first_seq.get_len()
+            except Exception:
+                return None
+        
+        debug_info: Dict[str, Any] = {
+            "waiting_queue_len_before": len(waiting_queue),
+            "budget_remaining_before_prefill": budget.remaining_token_budget(),
+            "scheduled_prefill_count": 0,
+            "skipped_by_partial_limit": 0,
+            "break_by_alloc_later": 0,
+            "break_by_budget_or_zero_chunk": 0,
+            "break_by_max_batched_tokens": 0,
+            "waiting_head_prompt_tokens": _safe_prompt_tokens(waiting_queue[0]) if waiting_queue else None,
+            "waiting_head_num_new_tokens_uncached": None,
+            "budget_remaining_after_prefill": None,
+            "waiting_queue_len_after": None,
+        }
+        
         count = 0
         if schedule_one:
             max_schedule_prefills = 1
@@ -1224,6 +1248,7 @@ class Scheduler:
                 "sequence.")
             if (partial_prefill_metadata is not None
                     and not partial_prefill_metadata.can_schedule(seq_group)):
+                debug_info["skipped_by_partial_limit"] += 1
                 leftover_waiting_sequences.appendleft(seq_group)
                 waiting_queue.popleft()
                 continue
@@ -1237,7 +1262,8 @@ class Scheduler:
                     partial_prefill_metadata=partial_prefill_metadata,
                 ))
             num_new_tokens = num_new_tokens_uncached + num_new_tokens_cached
-
+            if debug_info["waiting_head_num_new_tokens_uncached"] is None:
+                debug_info["waiting_head_num_new_tokens_uncached"] = num_new_tokens_uncached
             if not enable_chunking:
                 num_prompt_tokens = waiting_seqs[0].get_len()
                 assert num_new_tokens == num_prompt_tokens
@@ -1272,6 +1298,7 @@ class Scheduler:
                     can_allocate = self.block_manager.can_allocate(
                         seq_group, num_lookahead_slots=num_lookahead_slots)
             if can_allocate == AllocStatus.LATER:
+                debug_info["break_by_alloc_later"] = 1
                 break
             elif can_allocate == AllocStatus.NEVER:
                 logger.warning(
@@ -1314,6 +1341,7 @@ class Scheduler:
                 # We've reached the budget limit - since there might be
                 # continuous prefills in the running queue, we should break
                 # to avoid scheduling any new prefills.
+                debug_info["break_by_max_batched_tokens"] = 1
                 break
 
             num_new_seqs = seq_group.get_max_num_running_seqs()
@@ -1321,6 +1349,7 @@ class Scheduler:
                     num_new_tokens=num_new_tokens_uncached,
                     num_new_seqs=num_new_seqs,
             ):
+                debug_info["break_by_budget_or_zero_chunk"] = 1
                 break
 
             # Can schedule this request.
@@ -1371,12 +1400,17 @@ class Scheduler:
             self.prev_prompt = True
         if schedule_one:
             assert len(seq_groups) <= 1, "schedule simple error."
-        return SchedulerPrefillOutputs(
+        debug_info["scheduled_prefill_count"] = len(seq_groups)
+        debug_info["budget_remaining_after_prefill"] = budget.remaining_token_budget()
+        debug_info["waiting_queue_len_after"] = len(waiting_queue)
+        outputs = SchedulerPrefillOutputs(
             seq_groups=seq_groups,
             ignored_seq_groups=ignored_seq_groups,
             num_lookahead_slots=self._get_num_lookahead_slots(
                 is_prefill=True, enable_chunking=enable_chunking),
             blocks_to_offload=blocks_to_offload)
+        outputs.debug_info = debug_info
+        return outputs
     def schedule_simple(self) -> SchedulerOutputs:
         """Schedule queued requests.
 
