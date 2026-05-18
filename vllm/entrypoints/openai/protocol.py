@@ -254,6 +254,7 @@ class ChatCompletionRequest(OpenAIBaseModel):
     # NOTE this will be ignored by vLLM -- the model determines the behavior
     parallel_tool_calls: Optional[bool] = False
     user: Optional[str] = None
+    program_id: Optional[str] = None
 
     # --8<-- [start:chat-completion-sampling-params]
     best_of: Optional[int] = None

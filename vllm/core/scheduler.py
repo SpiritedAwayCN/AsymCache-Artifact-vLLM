@@ -14,13 +14,14 @@ from typing import Set, Tuple, Union
 from vllm.config import CacheConfig, LoRAConfig, SchedulerConfig
 from vllm.core.interfaces import AllocStatus, BlockSpaceManager
 from vllm.core.evictor import EvictionPolicy
+from vllm.core.pinned import calcTTL
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
 from vllm.prompt_adapter.request import PromptAdapterRequest
 from vllm.sequence import (Sequence, SequenceData, SequenceGroup,
                            SequenceGroupBase, SequenceGroupMetadata,
                            SequenceGroupMetadataDelta, SequenceStage,
-                           SequenceStatus)
+                           SequenceStatus, RequestStatus)
 from vllm.utils import Device, PyObjectCache
 
 logger = init_logger(__name__)
@@ -583,6 +584,9 @@ class Scheduler:
         # Sequence groups in the SWAPPED state.
         # Contain decode requests that are swapped out.
         self.swapped: Deque[SequenceGroup] = deque()
+        # Sequence groups in the PINNED state.
+        # Finished requests kept in cache until evicted.
+        self.pinned: List[SequenceGroup] = []
         # Sequence groups finished requests ids since last step iteration.
         # It lets the model know that any state associated with these requests
         # can and must be released after the current step.
@@ -1211,6 +1215,9 @@ class Scheduler:
         while self._passed_delay(time.time()) and waiting_queue:
             seq_group = waiting_queue[0]
 
+            if enable_chunking and seq_group.program_id is not None:
+                self._release_pinned_for_program(seq_group.program_id)
+
             waiting_seqs = seq_group.get_seqs(status=SequenceStatus.WAITING)
             assert len(waiting_seqs) == 1, (
                 "Waiting sequence group should have only one prompt "
@@ -1257,6 +1264,13 @@ class Scheduler:
             # If the sequence group cannot be allocated, stop.
             can_allocate = self.block_manager.can_allocate(
                 seq_group, num_lookahead_slots=num_lookahead_slots)
+            if (enable_chunking and can_allocate != AllocStatus.OK
+                    and self.pinned):
+                now = time.time()
+                while self.pinned and can_allocate != AllocStatus.OK:
+                    self._release_pinned_for_capacity(now)
+                    can_allocate = self.block_manager.can_allocate(
+                        seq_group, num_lookahead_slots=num_lookahead_slots)
             if can_allocate == AllocStatus.LATER:
                 break
             elif can_allocate == AllocStatus.NEVER:
@@ -1784,8 +1798,20 @@ class Scheduler:
             # chunked-prefill are enabled together.
             assert self.scheduler_config.is_multi_step and enable_chunking
 
-        return self.block_manager.can_append_slots(
+        can_append = self.block_manager.can_append_slots(
             seq_group=seq_group, num_lookahead_slots=num_lookahead_slots)
+
+        if can_append or not enable_chunking or not self.pinned:
+            return can_append
+
+        now = time.time()
+        while self.pinned and not can_append:
+            self._release_pinned_for_capacity(now)
+            can_append = self.block_manager.can_append_slots(
+                seq_group=seq_group,
+                num_lookahead_slots=num_lookahead_slots)
+
+        return can_append
 
     def _allow_async_output_proc(self, seq_group: SequenceGroup) -> bool:
         # async_output_proc is allowed only when we have a single sequence
@@ -1996,11 +2022,59 @@ class Scheduler:
         # Free finished seqs
         self._free_finished_seqs(seq_group)
 
+    def _pin_seq_group(self, seq_group: SequenceGroup, ttl: float,
+                       now: float) -> None:
+        seq_group.request_status = RequestStatus.PINNED
+        seq_group.pinned_ttl = ttl
+        seq_group.pinned_at = now
+        self.pinned.append(seq_group)
+
+    def _release_pinned_seq_group(self, seq_group: SequenceGroup) -> None:
+        if seq_group in self.pinned:
+            self.pinned.remove(seq_group)
+        seq_group.request_status = RequestStatus.ACTIVE
+        seq_group.pinned_ttl = None
+        seq_group.pinned_at = None
+        self._free_finished_seq_group(seq_group)
+
+    def _is_pinned_expired(self, seq_group: SequenceGroup, now: float) -> bool:
+        if seq_group.pinned_ttl is None or seq_group.pinned_at is None:
+            return False
+        return (now - seq_group.pinned_at) >= seq_group.pinned_ttl
+
+    def _release_pinned_for_program(self, program_id: Optional[str]) -> None:
+        if program_id is None:
+            return
+        matches = [sg for sg in self.pinned if sg.program_id == program_id]
+        for seq_group in matches:
+            self._release_pinned_seq_group(seq_group)
+
+    def _release_pinned_for_capacity(self, now: float) -> bool:
+        if not self.pinned:
+            return False
+
+        def key_fn(seq_group: SequenceGroup) -> Tuple[int, float]:
+            expired = 0 if self._is_pinned_expired(seq_group, now) else 1
+            return (expired, seq_group.arrival_time)
+
+        victim = min(self.pinned, key=key_fn)
+        self._release_pinned_seq_group(victim)
+        return True
+
     def free_finished_seq_groups(self) -> None:
         remaining: Deque[SequenceGroup] = deque()
         for seq_group in self.running:
-            self._free_finished_seq_group(seq_group)
-            if not seq_group.is_finished():
+            if seq_group.is_finished():
+                if not self.scheduler_config.chunked_prefill_enabled:
+                    self._free_finished_seq_group(seq_group)
+                else:
+                    ttl = calcTTL(seq_group)
+                    if ttl < 5:
+                        self._free_finished_seq_group(seq_group)
+                    else:
+                        self._pin_seq_group(seq_group, ttl, time.time())
+            else:
+                self._free_finished_seqs(seq_group)
                 remaining.append(seq_group)
 
         self.running = remaining

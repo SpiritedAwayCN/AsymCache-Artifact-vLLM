@@ -247,6 +247,7 @@ class OpenAIServingChat(OpenAIServing):
                         trace_headers=trace_headers,
                         prompt_adapter_request=prompt_adapter_request,
                         priority=request.priority,
+                        program_id=request.program_id,
                     )
 
                 generators.append(generator)

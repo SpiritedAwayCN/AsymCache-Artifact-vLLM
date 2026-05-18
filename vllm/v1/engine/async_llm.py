@@ -223,6 +223,7 @@ class AsyncLLM(EngineClient):
         trace_headers: Optional[Mapping[str, str]] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         priority: int = 0,
+        program_id: Optional[str] = None,
     ) -> RequestOutputCollector:
         """Add new request to the AsyncLLM."""
 
@@ -285,6 +286,7 @@ class AsyncLLM(EngineClient):
         trace_headers: Optional[Mapping[str, str]] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         priority: int = 0,
+        program_id: Optional[str] = None,
     ) -> AsyncGenerator[RequestOutput, None]:
         """
         Main function called by the API server to kick off a request
@@ -315,6 +317,7 @@ class AsyncLLM(EngineClient):
                 trace_headers=trace_headers,
                 prompt_adapter_request=prompt_adapter_request,
                 priority=priority,
+                program_id=program_id,
             )
 
             # The output_handler task pushes items into the queue.

@@ -89,6 +89,12 @@ class SequenceStatus(enum.IntEnum):
         return finish_reason
 
 
+class RequestStatus(enum.Enum):
+    """Status of a request (sequence group)."""
+    ACTIVE = enum.auto()
+    PINNED = enum.auto()
+
+
 class SequenceStage(enum.Enum):
     PREFILL = enum.auto()
     DECODE = enum.auto()
@@ -740,6 +746,7 @@ class SequenceGroup:
                     model; equal to max number of tokens a step can generate
                     for single-draft speculative decoding but larger than
                     that for multi-draft SD (currently not supported).
+        program_id: Optional program identifier for pinned reuse.
     """
 
     def __init__(self,
@@ -754,7 +761,8 @@ class SequenceGroup:
                  trace_headers: Optional[Mapping[str, str]] = None,
                  prompt_adapter_request: Optional[PromptAdapterRequest] = None,
                  priority: int = 0,
-                 draft_size: int = 1) -> None:
+                 draft_size: int = 1,
+                 program_id: Optional[str] = None) -> None:
         self.request_id = request_id
         self.seqs = seqs
         self.first_seq = seqs[0]
@@ -782,6 +790,11 @@ class SequenceGroup:
         self.encoder_seq = encoder_seq
         self.trace_headers = trace_headers
         self.priority = priority
+
+        self.program_id = program_id
+        self.request_status = RequestStatus.ACTIVE
+        self.pinned_at: Optional[float] = None
+        self.pinned_ttl: Optional[float] = None
 
         self.cached_request_output = None
 
@@ -1581,6 +1594,7 @@ class ParallelSampleSequenceGroup(SequenceGroupBase):
             trace_headers=seq_group.trace_headers,
             prompt_adapter_request=seq_group.prompt_adapter_request,
             priority=seq_group.priority,
+            program_id=seq_group.program_id,
         )
 
         group.streaming = params.output_kind == RequestOutputKind.DELTA
