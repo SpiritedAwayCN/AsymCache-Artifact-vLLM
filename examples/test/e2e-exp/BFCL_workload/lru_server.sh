@@ -38,7 +38,7 @@ wait_for_server() {
 
 LOG_FILE=./results/3x_LRU_qps3.0/server_output_qps3.0.log
 # prefilling instance
-CUDA_VISIBLE_DEVICES=4,5,6,7 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm/bin/python3 \
+CUDA_VISIBLE_DEVICES=4,5,6,7 /jizhicfs/marvinhjia/miniconda3/envs/sca-vllm-dev/bin/python3 \
     -m vllm.entrypoints.openai.api_server \
     --model /jizhicfs/marvinhjia/sca/models/huggingface/hub/models--meta-llama--Llama-3.1-70B-Instruct/snapshots/1605565b47bb9346c5515c34102e054115b4f98b \
     -tp 4 \

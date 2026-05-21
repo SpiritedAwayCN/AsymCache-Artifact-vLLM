@@ -652,6 +652,9 @@ class Scheduler:
                 scheduler_config.max_num_batched_tokens // i)
         
         self.use_simple_schedule = False
+        self.use_continuum = os.getenv("USE_CONTINUUM") == "1"
+        self._program_first_arrival: Dict[Optional[str], float] = {}
+        self._pinned_program_id_counts: Dict[str, int] = {}
 
     @property
     def next_cache_id(self):
@@ -668,6 +671,11 @@ class Scheduler:
 
     def add_seq_group(self, seq_group: SequenceGroup) -> None:
         # Add sequence groups to the waiting queue.
+        if self.use_continuum and seq_group.program_id is not None:
+            first_time = self._program_first_arrival.get(seq_group.program_id)
+            if first_time is None or seq_group.arrival_time < first_time:
+                self._program_first_arrival[
+                    seq_group.program_id] = seq_group.arrival_time
         self.waiting.append(seq_group)
 
     def _add_seq_group_to_running(self, seq_group: SequenceGroup) -> None:
@@ -1206,6 +1214,30 @@ class Scheduler:
         using_prompt_embeds: bool = False
 
         waiting_queue = self.waiting
+        if self.use_continuum and len(waiting_queue) > 1:
+            matched_program_ids = self._pinned_program_id_counts
+            program_first_arrival = self._program_first_arrival
+
+            def _program_first_arrival_time(
+                    seq_group: SequenceGroup) -> float:
+                program_id = seq_group.program_id
+                if program_id is None:
+                    return seq_group.arrival_time
+                first_time = program_first_arrival.get(program_id)
+                if first_time is None:
+                    first_time = seq_group.arrival_time
+                    program_first_arrival[program_id] = first_time
+                return first_time
+
+            waiting_list = list(waiting_queue)
+            waiting_list.sort(
+                key=lambda sg: (
+                    0 if sg.program_id in matched_program_ids else 1,
+                    _program_first_arrival_time(sg),
+                ),
+            )
+            waiting_queue = deque(waiting_list)
+            self.waiting = waiting_queue
 
         leftover_waiting_sequences: Deque[SequenceGroup] = deque()
 
@@ -2044,6 +2076,7 @@ class Scheduler:
                 self.free_seq(seq)
 
     def _free_finished_seq_group(self, seq_group: SequenceGroup) -> None:
+        logger.debug(f"Freeing finished seq group {seq_group.request_id}(program_id={seq_group.program_id}).")
         if seq_group.is_finished():
             # Free cross-attention block table, if it exists
             self._free_seq_group_cross_attn_blocks(seq_group)
@@ -2061,14 +2094,29 @@ class Scheduler:
         seq_group.request_status = RequestStatus.PINNED
         seq_group.pinned_ttl = ttl
         seq_group.pinned_at = now
+        logger.debug(f"Pinning seq group {seq_group.request_id}(program_id={seq_group.program_id}) with ttl {ttl} at time {now}.")
         self.pinned.append(seq_group)
+        if self.use_continuum and seq_group.program_id is not None:
+            program_id = seq_group.program_id
+            self._pinned_program_id_counts[program_id] = (
+                self._pinned_program_id_counts.get(program_id, 0) + 1)
 
     def _release_pinned_seq_group(self, seq_group: SequenceGroup) -> None:
-        if seq_group in self.pinned:
+        was_pinned = seq_group in self.pinned
+        if was_pinned:
             self.pinned.remove(seq_group)
+            if self.use_continuum and seq_group.program_id is not None:
+                program_id = seq_group.program_id
+                count = self._pinned_program_id_counts.get(program_id)
+                if count is not None:
+                    if count <= 1:
+                        del self._pinned_program_id_counts[program_id]
+                    else:
+                        self._pinned_program_id_counts[program_id] = count - 1
         seq_group.request_status = RequestStatus.ACTIVE
         seq_group.pinned_ttl = None
         seq_group.pinned_at = None
+        logger.debug(f"Releasing pinned seq group {seq_group.request_id}(program_id={seq_group.program_id}).")
         self._free_finished_seq_group(seq_group)
 
     def _is_pinned_expired(self, seq_group: SequenceGroup, now: float) -> bool:
@@ -2080,6 +2128,7 @@ class Scheduler:
         if program_id is None:
             return
         matches = [sg for sg in self.pinned if sg.program_id == program_id]
+        logger.debug(f"Try to release pinned seq groups for program_id {program_id}, found {len(matches)} matches.")
         for seq_group in matches:
             self._release_pinned_seq_group(seq_group)
 
@@ -2099,11 +2148,11 @@ class Scheduler:
         remaining: Deque[SequenceGroup] = deque()
         for seq_group in self.running:
             if seq_group.is_finished():
-                if not self.scheduler_config.chunked_prefill_enabled:
+                if not self.use_continuum or not self.scheduler_config.chunked_prefill_enabled:
                     self._free_finished_seq_group(seq_group)
                 else:
                     ttl = calcTTL(seq_group)
-                    if ttl < 5:
+                    if ttl < 2:
                         self._free_finished_seq_group(seq_group)
                     else:
                         self._pin_seq_group(seq_group, ttl, time.time())

@@ -564,6 +564,7 @@ class LLMEngine:
         slo_dict: Optional[Dict[str, float]] = None,
         user_id: int = 0,
         program_id: Optional[str] = None,
+        estimated_ttl: Optional[float] = 0.0,
     ) -> Optional[SequenceGroup]:
         """Add a processed request to the engine's request pool.
         return the created sequence group.
@@ -580,6 +581,7 @@ class LLMEngine:
                 prompt_adapter_request=prompt_adapter_request,
                 priority=priority,
                 program_id=program_id,
+                estimated_ttl=estimated_ttl,
             )
             return None
 
@@ -610,7 +612,8 @@ class LLMEngine:
                 prompt_adapter_request=prompt_adapter_request,
                 encoder_seq=encoder_seq,
                 priority=priority,
-                program_id=program_id)
+                program_id=program_id,
+                estimated_ttl=estimated_ttl,)
         elif isinstance(params, PoolingParams):
             seq_group = self._create_sequence_group_with_pooling(
                 request_id,
@@ -621,7 +624,8 @@ class LLMEngine:
                 prompt_adapter_request=prompt_adapter_request,
                 encoder_seq=encoder_seq,
                 priority=priority,
-                program_id=program_id)
+                program_id=program_id,
+                estimated_ttl=estimated_ttl,)
         else:
             raise ValueError(
                 "Either SamplingParams or PoolingParams must be provided.")
@@ -655,6 +659,7 @@ class LLMEngine:
         slo_dict: Optional[Dict[str, float]] = None,
         user_id: int = 0,
         program_id: Optional[str] = None,
+        estimated_ttl: Optional[float] = 0.0,
     ) -> None:
         ...
 
@@ -675,6 +680,7 @@ class LLMEngine:
         slo_dict: Optional[Dict[str, float]] = None,
         user_id: int = 0,
         program_id: Optional[str] = None,
+        estimated_ttl: Optional[float] = 0.0,
     ) -> None:
         ...
 
@@ -699,6 +705,7 @@ class LLMEngine:
             slo_dict: Optional[Dict[str, float]] = None,
             user_id: int = 0,
             program_id: Optional[str] = None,
+            estimated_ttl: Optional[float] = 0.0,
     ) -> None:
         """Add a request to the engine's request pool.
 
@@ -798,6 +805,7 @@ class LLMEngine:
             slo_dict=slo_dict,
             user_id=user_id,
             program_id=program_id,
+            estimated_ttl=estimated_ttl,
         )
 
     def _create_sequence_group_with_sampling(
@@ -812,6 +820,7 @@ class LLMEngine:
         encoder_seq: Optional[Sequence] = None,
         priority: int = 0,
         program_id: Optional[str] = None,
+        estimated_ttl: Optional[float] = 0.0,
     ) -> SequenceGroup:
         """Creates a SequenceGroup with SamplingParams."""
         max_logprobs = self.get_model_config().max_logprobs
@@ -848,7 +857,8 @@ class LLMEngine:
             encoder_seq=encoder_seq,
             priority=priority,
             draft_size=draft_size,
-            program_id=program_id)
+            program_id=program_id,
+            estimated_ttl=estimated_ttl,)
 
         return seq_group
 
@@ -863,6 +873,7 @@ class LLMEngine:
         encoder_seq: Optional[Sequence] = None,
         priority: int = 0,
         program_id: Optional[str] = None,
+        estimated_ttl: Optional[float] = 0.0,
     ) -> SequenceGroup:
         """Creates a SequenceGroup with PoolingParams."""
         # Defensive copy of PoolingParams, which are used by the pooler
@@ -877,7 +888,8 @@ class LLMEngine:
             prompt_adapter_request=prompt_adapter_request,
             encoder_seq=encoder_seq,
             priority=priority,
-            program_id=program_id)
+            program_id=program_id,
+            estimated_ttl=estimated_ttl)
         return seq_group
 
     def abort_request(self, request_id: Union[str, Iterable[str]]) -> None:

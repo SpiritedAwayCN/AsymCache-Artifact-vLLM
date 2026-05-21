@@ -311,7 +311,8 @@ class MQLLMEngine:
                 trace_headers=request.trace_headers,
                 prompt_adapter_request=request.prompt_adapter_request,
                 priority=request.priority,
-                program_id=request.program_id)
+                program_id=request.program_id,
+                estimated_ttl=request.estimated_ttl,)
 
             if self.log_requests:
                 logger.info("Added request %s.", request.request_id)

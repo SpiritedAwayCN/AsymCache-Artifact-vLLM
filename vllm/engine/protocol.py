@@ -57,6 +57,7 @@ class EngineClient(ABC):
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         priority: int = 0,
         program_id: Optional[str] = None,
+        estimated_ttl: Optional[float] = 0.0,
     ) -> AsyncGenerator[RequestOutput, None]:
         """Generate outputs for a request."""
         ...

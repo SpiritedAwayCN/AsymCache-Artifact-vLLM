@@ -797,8 +797,8 @@ class FlashAttentionMetadataBuilder(
             seqused_k_block=seqused_k_block,
             blocks_in_batch=blocks_in_batch,
         )
-        if num_decode_tokens > 50:
-            logger.debug(f"FlashAttentionMetadata (not 2seg): {ret}")
+        # if num_decode_tokens > 50:
+        #     logger.debug(f"FlashAttentionMetadata (not 2seg): {ret}")
         return ret
 
 

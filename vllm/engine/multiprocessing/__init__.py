@@ -37,6 +37,7 @@ class RPCProcessRequest:
     prompt_adapter_request: Optional[PromptAdapterRequest] = None
     priority: int = 0
     program_id: Optional[str] = None
+    estimated_ttl: float = 0.0
 
     @overload
     def __init__(
@@ -49,6 +50,7 @@ class RPCProcessRequest:
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         priority: int = 0,
         program_id: Optional[str] = None,
+        estimated_ttl: float = 0.0
     ) -> None:
         ...
 
@@ -65,6 +67,7 @@ class RPCProcessRequest:
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         priority: int = 0,
         program_id: Optional[str] = None,
+        estimated_ttl: float = 0.0
     ) -> None:
         ...
 
@@ -82,6 +85,7 @@ class RPCProcessRequest:
             prompt_adapter_request: Optional[PromptAdapterRequest] = None,
             priority: int = 0,
             program_id: Optional[str] = None,
+            estimated_ttl: float = 0.0,
             *,
             inputs: Optional[PromptType] = None,  # DEPRECATED
     ) -> None:
@@ -100,6 +104,7 @@ class RPCProcessRequest:
         self.prompt_adapter_request = prompt_adapter_request
         self.priority = priority
         self.program_id = program_id
+        self.estimated_ttl = estimated_ttl
 
 
 @dataclass

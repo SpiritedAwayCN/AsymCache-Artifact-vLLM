@@ -452,6 +452,7 @@ class MQLLMEngineClient(EngineClient):
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         priority: int = 0,
         program_id: Optional[str] = None,
+        estimated_ttl: Optional[float] = 0.0,
     ) -> AsyncGenerator[RequestOutput, None]:
         ...
 
@@ -468,6 +469,7 @@ class MQLLMEngineClient(EngineClient):
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         priority: int = 0,
         program_id: Optional[str] = None,
+        estimated_ttl: Optional[float] = 0.0,
     ) -> AsyncGenerator[RequestOutput, None]:
         ...
 
@@ -485,6 +487,7 @@ class MQLLMEngineClient(EngineClient):
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         priority: int = 0,
         program_id: Optional[str] = None,
+        estimated_ttl: Optional[float] = 0.0,
         *,
         inputs: Optional[PromptType] = None  # DEPRECATED
     ) -> AsyncGenerator[RequestOutput, None]:
@@ -516,7 +519,7 @@ class MQLLMEngineClient(EngineClient):
         return self._process_request(prompt, sampling_params, request_id,
                                      lora_request, trace_headers,
                                      prompt_adapter_request, priority,
-                                     program_id)
+                                     program_id, estimated_ttl)
 
     @overload
     def encode(
@@ -602,6 +605,7 @@ class MQLLMEngineClient(EngineClient):
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
         priority: int = 0,
         program_id: Optional[str] = None,
+        estimated_ttl: Optional[float] = 0.0,
     ) -> Union[AsyncGenerator[RequestOutput, None], AsyncGenerator[
             PoolingRequestOutput, None]]:
         """Send an RPCGenerateRequest to the RPCServer and stream responses."""
@@ -657,6 +661,7 @@ class MQLLMEngineClient(EngineClient):
                     prompt_adapter_request=prompt_adapter_request,
                     priority=priority,
                     program_id=program_id,
+                    estimated_ttl=estimated_ttl,
                 ))
 
             # 3) Send the RPCGenerateRequest to the MQLLMEngine.

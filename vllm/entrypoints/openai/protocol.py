@@ -255,6 +255,7 @@ class ChatCompletionRequest(OpenAIBaseModel):
     parallel_tool_calls: Optional[bool] = False
     user: Optional[str] = None
     program_id: Optional[str] = None
+    estimated_ttl: float = 0.0
 
     # --8<-- [start:chat-completion-sampling-params]
     best_of: Optional[int] = None
@@ -790,6 +791,8 @@ class CompletionRequest(OpenAIBaseModel):
     prompt_logprobs: Optional[int] = None
     std_output_tokens: Optional[list[int]] = None
     std_output_str: Optional[str] = None
+    program_id: Optional[str] = None
+    estimated_ttl: float = 0.0
     # doc: end-completion-sampling-params
 
     # --8<-- [start:completion-extra-params]

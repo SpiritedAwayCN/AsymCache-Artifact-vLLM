@@ -762,7 +762,8 @@ class SequenceGroup:
                  prompt_adapter_request: Optional[PromptAdapterRequest] = None,
                  priority: int = 0,
                  draft_size: int = 1,
-                 program_id: Optional[str] = None) -> None:
+                 program_id: Optional[str] = None,
+                 estimated_ttl: Optional[float] = 0.0) -> None:
         self.request_id = request_id
         self.seqs = seqs
         self.first_seq = seqs[0]
@@ -795,6 +796,7 @@ class SequenceGroup:
         self.request_status = RequestStatus.ACTIVE
         self.pinned_at: Optional[float] = None
         self.pinned_ttl: Optional[float] = None
+        self.estimated_ttl = estimated_ttl
 
         self.cached_request_output = None
 
