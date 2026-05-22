@@ -12,7 +12,7 @@ from vllm.core.block.interfaces import (Block, BlockAllocator, BlockId, Device,
                                         DeviceAwareBlockAllocator)
 from vllm.core.block.naive_block import (BlockPool, NaiveBlock,
                                          NaiveBlockAllocator)
-from vllm.core.evictor import EvictionPolicy, Evictor, make_evictor
+from vllm.core.evictor import EvictionPolicy, Evictor, make_evictor, EVICTOR_DELTA_INTERCEPT, EVICTOR_DELTA_SLOPE
 from vllm.logger import init_logger
 from vllm.sequence import Sequence
 
@@ -275,7 +275,7 @@ class PrefixCachingBlockAllocator(BlockAllocator):
                                  last_accessed=last_accessed, 
                                  total_count=total_count)
 
-    def _decr_refcount_cached_block(self, block: Block) -> None:
+    def _decr_refcount_cached_block(self, block: Block, multiplier: float = 1) -> None:
         # Ensure this is immutable/cached block
         assert block.content_hash is not None
 
@@ -294,7 +294,15 @@ class PrefixCachingBlockAllocator(BlockAllocator):
 
         # Add the cached block to the evictor
         # (This keeps the cached block around so it can be reused)
-        self.evictor.add(block_id, block.content_hash, block.num_tokens_total,
+        
+        if multiplier == 1:
+            val = block.num_tokens_total
+        else:
+            # equivalently times multiplier
+            # logger.debug(f"Using multiplier={multiplier} to calculate eviction value for block_id={block_id}, num_tokens_total={block.num_tokens_total}")
+            val = multiplier * block.num_tokens_total + (multiplier - 1) * EVICTOR_DELTA_INTERCEPT / EVICTOR_DELTA_SLOPE + 1e-8
+        
+        self.evictor.add(block_id, block.content_hash, val,
                          self._block_tracker[block_id].last_accessed,
                          self._block_tracker[block_id].total_count)
 
@@ -373,7 +381,7 @@ class PrefixCachingBlockAllocator(BlockAllocator):
 
         return block_id
 
-    def _free_block_id(self, block: Block) -> None:
+    def _free_block_id(self, block: Block, multiplier: float = 1) -> None:
         """Decrements the refcount of the block. The block may be in two 
         possible states: (1) immutable/cached or (2) mutable/hashless. 
         In the first case, the refcount is decremented directly and the block
@@ -387,7 +395,7 @@ class PrefixCachingBlockAllocator(BlockAllocator):
         if block.content_hash is not None:
             # Immutable: This type of block is always cached, and we want to
             # keep it in the evictor for future reuse
-            self._decr_refcount_cached_block(block)
+            self._decr_refcount_cached_block(block, multiplier)
         else:
             # Mutable: This type of block is not cached, so we release it
             # directly to the hashless allocator
@@ -395,11 +403,12 @@ class PrefixCachingBlockAllocator(BlockAllocator):
 
         assert block.block_id is None
 
-    def free(self, block: Block, keep_block_object: bool = False) -> None:
+    def free(self, block: Block, keep_block_object: bool = False, multiplier: float = 1) -> None:
         """Release the block (look at free_block_id(..) docs)
         """
         # Release the physical block index
-        self._free_block_id(block)
+        # logger.debug(f"Freeing block {block.block_id} with multiplier {multiplier}.")
+        self._free_block_id(block, multiplier=multiplier)
 
         # Release the block object to the pool
         if not keep_block_object:

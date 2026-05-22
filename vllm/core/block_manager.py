@@ -329,8 +329,9 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
         new_cows = self.block_allocator.clear_copy_on_writes()
         return new_cows
 
-    def free(self, seq: Sequence) -> None:
+    def free(self, seq: Sequence, multiplier: float = 1) -> None:
         seq_id = seq.seq_id
+        # logger.debug(f"Freeing sequence: {seq.seq_id} with multiplier {multiplier}. in self.block_tables = {seq_id in self.block_tables}")
 
         if seq_id not in self.block_tables:
             # Already freed or haven't been scheduled yet.
@@ -345,7 +346,7 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
         self._computed_blocks_tracker.remove_seq(seq_id)
 
         # Free table/blocks
-        self.block_tables[seq_id].free()
+        self.block_tables[seq_id].free(multiplier=multiplier)
         del self.block_tables[seq_id]
 
     def free_cross(self, seq_group: SequenceGroup) -> None:

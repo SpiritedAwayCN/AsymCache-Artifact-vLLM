@@ -150,7 +150,7 @@ class NaiveBlockAllocator(BlockAllocator):
         if refcount == 0:
             self._free_block_indices.appendleft(block_id)
 
-    def free(self, block: Block, keep_block_object: bool = False) -> None:
+    def free(self, block: Block, keep_block_object: bool = False, multiplier: float = 1) -> None:
         # Release the physical block id
         self._free_block_id(block)
 

@@ -57,7 +57,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 /jizhicfs/marvinhjia/miniconda3/envs/sca-vllm-dev/b
     --gpu-memory-utilization 0.8 \
     > ${LOG_FILE} 2>&1 &
 
-sleep 600
+sleep 450
 wait_for_server 8156
 python agent_interface_continuum_mwf.py
 sleep infinity

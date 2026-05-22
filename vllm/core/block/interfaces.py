@@ -125,7 +125,7 @@ class BlockAllocator(ABC):
         pass
 
     @abstractmethod
-    def free(self, block: Block) -> None:
+    def free(self, block: Block, multiplier: float = 1) -> None:
         pass
 
     @abstractmethod
@@ -246,7 +246,7 @@ class DeviceAwareBlockAllocator(ABC):
         pass
 
     @abstractmethod
-    def free(self, block: Block) -> None:
+    def free(self, block: Block, multiplier: float = 1) -> None:
         pass
 
     @abstractmethod

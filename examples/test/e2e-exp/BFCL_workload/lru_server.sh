@@ -4,7 +4,7 @@ export NCCL_ALGO=Ring
 export VLLM_PORT=12355
 export VLLM_USE_POD_ATTN=1
 export TRANSFORMERS_OFFLINE=1
-export VLLM_LOGGING_LEVEL=INFO
+export VLLM_LOGGING_LEVEL=DEBUG
 export HF_ENDPOINT=https://hf-mirror.com
 export VLLM_ALLOW_DEPRECATED_BLOCK_MANAGER_V1=1
 export VLLM_HOST_IP=$(hostname -I | awk '{print $1}')
@@ -12,6 +12,7 @@ export HF_HOME=/jizhicfs/marvinhjia/sca/models/huggingface
 export CSET_DIR=/jizhicfs/marvinhjia/sca/yilin/vllm-dev/csrc/c_set
 export HUGGINGFACE_HUB_CACHE=/jizhicfs/marvinhjia/sca/models/huggingface/hub
 
+export DISABLE_MULTIPLIER=1
 export USE_MINEXP=0
 export VLLM_EVICTOR_POLICY=lru
 export MINEXP_A=0
@@ -56,7 +57,7 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 /jizhicfs/marvinhjia/miniconda3/envs/sca-vllm-dev/b
 
 sleep 450
 wait_for_server 8055
-python agent_interface_lru.py
+python agent_interface_lru_agent.py
 # sleep infinity
 # Cleanup commands, suppressing their output
 ps -e | grep pt_main_thread | awk '{print $1}' | xargs kill -9 > /dev/null 2>&1

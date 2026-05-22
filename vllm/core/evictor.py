@@ -10,6 +10,10 @@ from vllm.logger import init_logger
 logger = init_logger(__name__)
 # from vllm.utils import func_timer
 
+# Linear model parameters for size-based delta (delta = slope * size + intercept).
+EVICTOR_DELTA_SLOPE = 0.00043533405552524906 # (original c)
+EVICTOR_DELTA_INTERCEPT = 16.975203511045493 # (original k)
+
 class EvictionPolicy(enum.Enum):
     """Enum for eviction policy used by make_evictor to instantiate the correct
        Evictor subclass.
@@ -727,14 +731,21 @@ def make_evictor(eviction_policy: EvictionPolicy) -> Evictor:
         return LRUEvictor()
     elif eviction_policy == EvictionPolicy.MWF:
         from vllm.core.block.common import BASE_FREQ, USE_MINEXP
-        c = 16.975203511045493
-        k = 0.00043533405552524906
         if USE_MINEXP:
             print("evictor:MWF_MINEXP")
             from vllm.core.block.common import MINEXP_A, MINEXP_B, MINEXP_ALPHA, MINEXP_BETA
-            return WeightEvictor(MINEXP_A, MINEXP_B, MINEXP_ALPHA, MINEXP_BETA, lambda x: k * x + c)
+            return WeightEvictor(
+                MINEXP_A,
+                MINEXP_B,
+                MINEXP_ALPHA,
+                MINEXP_BETA,
+                lambda x: EVICTOR_DELTA_SLOPE * x + EVICTOR_DELTA_INTERCEPT,
+            )
         else:
-            return WeightEvictor(BASE_FREQ, lambda x: k * x + c)
+            return WeightEvictor(
+                BASE_FREQ,
+                lambda x: EVICTOR_DELTA_SLOPE * x + EVICTOR_DELTA_INTERCEPT,
+            )
     elif eviction_policy == EvictionPolicy.LFU:
         from vllm.core.block.common import BASE_FREQ, USE_MINEXP
         print("evictor:LFU")
@@ -748,10 +759,14 @@ def make_evictor(eviction_policy: EvictionPolicy) -> Evictor:
         from vllm.core.block.common import BASE_FREQ, USE_MINEXP
         assert USE_MINEXP
         print("evictor:MWF_BS")
-        c = 16.975203511045493
-        k = 0.00043533405552524906
         from vllm.core.block.common import MINEXP_A, MINEXP_B, MINEXP_ALPHA, MINEXP_BETA
-        return MWF_BSEvictor(MINEXP_A, MINEXP_B, MINEXP_ALPHA, MINEXP_BETA, lambda x: k * x + c)
+        return MWF_BSEvictor(
+            MINEXP_A,
+            MINEXP_B,
+            MINEXP_ALPHA,
+            MINEXP_BETA,
+            lambda x: EVICTOR_DELTA_SLOPE * x + EVICTOR_DELTA_INTERCEPT,
+        )
     elif eviction_policy == EvictionPolicy.BS:
         from vllm.core.block.common import BASE_FREQ, USE_MINEXP
         assert USE_MINEXP
@@ -760,10 +775,10 @@ def make_evictor(eviction_policy: EvictionPolicy) -> Evictor:
         return BSEvictor(MINEXP_A, MINEXP_B, MINEXP_ALPHA, MINEXP_BETA)        
     elif eviction_policy == EvictionPolicy.PENSIEVE:
         print("evictor:PensieveEvictor")
-        c = 16.975203511045493
-        k = 0.00043533405552524906
         # c = 6.556888133987368
         # k = 0.0003838702301714223
-        return PensieveEvictor(lambda x: k * x + c)
+        return PensieveEvictor(
+            lambda x: EVICTOR_DELTA_SLOPE * x + EVICTOR_DELTA_INTERCEPT,
+        )
     else:
         raise ValueError(f"Unknown cache eviction policy: {eviction_policy}")

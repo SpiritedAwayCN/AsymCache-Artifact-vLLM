@@ -66,7 +66,7 @@ class BackendState:
         base = self.url.rstrip("/")
         if not base.endswith("/v1"):
             base = f"{base}/v1"
-        return f"{base}/chat/completions"
+        return f"{base}/completions"
     
     # Delegate to metrics_client
     @property

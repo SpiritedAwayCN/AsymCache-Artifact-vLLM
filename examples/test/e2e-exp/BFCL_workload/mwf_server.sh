@@ -4,7 +4,7 @@ export NCCL_ALGO=Ring
 export VLLM_PORT=12359
 export VLLM_USE_POD_ATTN=1
 export TRANSFORMERS_OFFLINE=1
-export VLLM_LOGGING_LEVEL=INFO
+export VLLM_LOGGING_LEVEL=DEBUG
 export HF_ENDPOINT=https://hf-mirror.com
 export VLLM_ALLOW_DEPRECATED_BLOCK_MANAGER_V1=1
 export VLLM_HOST_IP=$(hostname -I | awk '{print $1}')
@@ -19,6 +19,8 @@ export MINEXP_B=-9.750000e+00
 export MINEXP_ALPHA=9.491222e+01
 export MINEXP_BETA=2.372805e+00
 export SCHEDULE_LOG_PATH="./results/new_param_3x_MWF_qps3.0/schedule_qps3.0.log"
+
+mkdir -p ./results/new_param_3x_MWF_qps3.0
 
 if python -c "import quart" &> /dev/null; then
     echo "Quart is already installed."
@@ -38,7 +40,7 @@ wait_for_server() {
 
 LOG_FILE=./results/new_param_3x_MWF_qps3.0/server_output_qps3.0.log
 # prefilling instance
-CUDA_VISIBLE_DEVICES=0,1,2,3 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm/bin/python3 \
+CUDA_VISIBLE_DEVICES=0,1,2,3 /jizhicfs/marvinhjia/miniconda3/envs/sca-vllm-dev/bin/python3 \
     -m vllm.entrypoints.openai.api_server \
     --model /jizhicfs/marvinhjia/sca/models/huggingface/hub/models--meta-llama--Llama-3.1-70B-Instruct/snapshots/1605565b47bb9346c5515c34102e054115b4f98b \
     -tp 4 \
@@ -56,7 +58,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm
 
 sleep 450
 wait_for_server 8059
-python agent_interface_mwf.py
+python agent_interface_mwf_agent.py
 sleep infinity
 # Cleanup commands, suppressing their output
 ps -e | grep pt_main_thread | awk '{print $1}' | xargs kill -9 > /dev/null 2>&1

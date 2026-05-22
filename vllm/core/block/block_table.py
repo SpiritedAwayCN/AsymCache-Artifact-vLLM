@@ -6,7 +6,9 @@ from typing import List, Optional
 from vllm.core.block.common import BlockList
 from vllm.core.block.interfaces import Block, DeviceAwareBlockAllocator
 from vllm.utils import Device, cdiv, chunk_list
+from vllm.logger import init_logger
 
+logger = init_logger(__name__)
 
 class BlockTable:
     """A class to manage blocks for a specific sequence.
@@ -231,7 +233,7 @@ class BlockTable:
             max_block_sliding_window=self._max_block_sliding_window,
         )
 
-    def free(self) -> None:
+    def free(self, multiplier: float = 1) -> None:
         """Frees the memory occupied by the blocks in the BlockTable.
 
         This method iterates over all the blocks in the `_blocks` list and calls
@@ -239,8 +241,9 @@ class BlockTable:
         occupied by each block. After freeing all the blocks, the `_blocks` list
         is set to `None`.
         """
+        # logger.debug(f"Freeing BlockTable with {len(self._blocks)} blocks, multiplier={multiplier}.")
         for block in self.blocks:
-            self._allocator.free(block)
+            self._allocator.free(block, multiplier=multiplier)
         self._blocks.reset()
 
     @property

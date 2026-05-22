@@ -236,7 +236,7 @@ async def forward_non_streaming_request(
         FastAPI Response with vLLM response content
     """
     # Remove program_id before forwarding
-    payload = remove_program_id(payload)
+    # payload = remove_program_id(payload)
     
     resp = await client.post(url, json=payload)
     

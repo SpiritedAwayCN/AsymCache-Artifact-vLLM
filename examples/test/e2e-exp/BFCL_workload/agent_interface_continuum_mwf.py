@@ -230,6 +230,10 @@ async def replay_one_session(session_info, output_file, file_lock, global_t0_mon
             ttl = sample_tools_sleep(tool_names, no_random=True)
             tool_sleep = sample_tools_sleep(tool_names, no_random=False)
             
+            if local_iteration == len(rows) - 1:
+                # last step
+                ttl = -1
+            
             await fetch_one_llm(
                 http_session=http_session,
                 row=row,

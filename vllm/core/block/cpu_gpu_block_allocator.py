@@ -10,7 +10,9 @@ from vllm.core.block.prefix_caching_block import PrefixCachingBlockAllocator
 from vllm.core.evictor import EvictionPolicy, Evictor, make_evictor
 from vllm.platforms import current_platform
 from vllm.utils import Device
+from vllm.logger import init_logger
 
+logger = init_logger(__name__)
 
 class CpuGpuBlockAllocator(DeviceAwareBlockAllocator):
     """A block allocator that can allocate blocks on both CPU and GPU memory.
@@ -199,11 +201,12 @@ class CpuGpuBlockAllocator(DeviceAwareBlockAllocator):
         return self._allocators[device].allocate_immutable_block(
             prev_block, token_ids, extra_hash=extra_hash)
 
-    def free(self, block: Block) -> None:
+    def free(self, block: Block, multiplier: float = 1) -> None:
         """Frees the memory occupied by the given block.
 
         Args:
             block (Block): The block to be freed.
+            multiplier (float): A multiplier for the number of tokens in the block.
         """
         # Null block should never be freed
         if isinstance(block, NullBlock):
@@ -211,7 +214,8 @@ class CpuGpuBlockAllocator(DeviceAwareBlockAllocator):
         block_id = block.block_id
         assert block_id is not None
         allocator = self._block_ids_to_allocator[block_id]
-        allocator.free(block)
+        # logger.debug(f"Freeing block {block_id} with multiplier {multiplier}.")
+        allocator.free(block, multiplier=multiplier)
 
     def fork(self, last_block: Block) -> List[Block]:
         """Creates a new sequence of blocks that shares the same underlying

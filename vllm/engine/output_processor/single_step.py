@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import List
+import os
 
 from vllm.config import SchedulerConfig
 from vllm.core.scheduler import Scheduler
@@ -13,7 +14,11 @@ from vllm.sequence import (CompletionSequenceGroupOutput, SequenceGroup,
 from vllm.transformers_utils.detokenizer import Detokenizer
 from vllm.utils import Counter
 
+from vllm.core.pinned import calcTTL
+
 logger = init_logger(__name__)
+USE_CONTINUUM = os.environ.get("USE_CONTINUUM", "0") == "1"
+DISABLE_MULTIPLIER = os.environ.get("DISABLE_MULTIPLIER", "0") == "1"
 
 
 def single_step_process_prompt_logprob(
@@ -139,6 +144,8 @@ class SingleStepOutputProcessor(SequenceGroupOutputProcessor):
             sampling_params,
             lora_req=seq_group.lora_request,
         )
-        if seq.is_finished():
-            for scheduler in self.scheduler:
-                scheduler.free_seq(seq)
+        ttl = calcTTL(seq_group)
+        if not USE_CONTINUUM or ttl == 0:
+            if seq.is_finished():
+                for scheduler in self.scheduler:
+                    scheduler.free_seq(seq, multiplier=(1e-4 if ttl < 0 and not DISABLE_MULTIPLIER else 1))

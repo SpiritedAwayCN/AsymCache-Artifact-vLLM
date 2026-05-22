@@ -13,7 +13,7 @@ from typing import Set, Tuple, Union
 
 from vllm.config import CacheConfig, LoRAConfig, SchedulerConfig
 from vllm.core.interfaces import AllocStatus, BlockSpaceManager
-from vllm.core.evictor import EvictionPolicy
+from vllm.core.evictor import EvictionPolicy, EVICTOR_DELTA_SLOPE, EVICTOR_DELTA_INTERCEPT
 from vllm.core.pinned import calcTTL
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
@@ -653,6 +653,7 @@ class Scheduler:
         
         self.use_simple_schedule = False
         self.use_continuum = os.getenv("USE_CONTINUUM") == "1"
+        self.disable_multiplier = os.getenv("DISABLE_MULTIPLIER") == "1"
         self._program_first_arrival: Dict[Optional[str], float] = {}
         self._pinned_program_id_counts: Dict[str, int] = {}
 
@@ -2065,18 +2066,19 @@ class Scheduler:
     def fork_seq(self, parent_seq: Sequence, child_seq: Sequence) -> None:
         self.block_manager.fork(parent_seq, child_seq)
 
-    def free_seq(self, seq: Sequence) -> None:
+    def free_seq(self, seq: Sequence, multiplier: float = 1) -> None:
         """Free a sequence from a block table."""
-        self.block_manager.free(seq)
+        # logger.debug(f"Freeing seq {seq.seq_id} from block table, multiplier={multiplier}.")
+        self.block_manager.free(seq, multiplier=multiplier)
 
-    def _free_finished_seqs(self, seq_group: SequenceGroup) -> None:
+    def _free_finished_seqs(self, seq_group: SequenceGroup, multiplier: float = 1) -> None:
         """Free finished seqs in a sequence group."""
         for seq in seq_group.get_seqs():
             if seq.is_finished():
-                self.free_seq(seq)
+                self.free_seq(seq, multiplier=multiplier)
 
-    def _free_finished_seq_group(self, seq_group: SequenceGroup) -> None:
-        logger.debug(f"Freeing finished seq group {seq_group.request_id}(program_id={seq_group.program_id}).")
+    def _free_finished_seq_group(self, seq_group: SequenceGroup, multiplier: float = 1) -> None:
+        logger.debug(f"Freeing finished seq group {seq_group.request_id}(program_id={seq_group.program_id}), multiplier={multiplier}.")
         if seq_group.is_finished():
             # Free cross-attention block table, if it exists
             self._free_seq_group_cross_attn_blocks(seq_group)
@@ -2087,7 +2089,7 @@ class Scheduler:
             self._finished_requests_ids.append(seq_group.request_id)
 
         # Free finished seqs
-        self._free_finished_seqs(seq_group)
+        self._free_finished_seqs(seq_group, multiplier=multiplier)
 
     def _pin_seq_group(self, seq_group: SequenceGroup, ttl: float,
                        now: float) -> None:
@@ -2128,8 +2130,8 @@ class Scheduler:
         if program_id is None:
             return
         matches = [sg for sg in self.pinned if sg.program_id == program_id]
-        logger.debug(f"Try to release pinned seq groups for program_id {program_id}, found {len(matches)} matches.")
         for seq_group in matches:
+            logger.debug(f"Try to release pinned seq groups for program_id {program_id}, found {len(matches)} matches.")
             self._release_pinned_seq_group(seq_group)
 
     def _release_pinned_for_capacity(self, now: float) -> bool:
@@ -2148,11 +2150,16 @@ class Scheduler:
         remaining: Deque[SequenceGroup] = deque()
         for seq_group in self.running:
             if seq_group.is_finished():
+                ttl = calcTTL(seq_group)
+                multiplier = 1e-4 if ttl < 0 and not self.disable_multiplier else 1
                 if not self.use_continuum or not self.scheduler_config.chunked_prefill_enabled:
-                    self._free_finished_seq_group(seq_group)
+                    self._free_finished_seq_group(seq_group, multiplier=multiplier)
                 else:
-                    ttl = calcTTL(seq_group)
-                    if ttl < 2:
+                    if ttl < 0:
+                        # last step, use multiplier to ensure much less weight in evictor
+                        # logger.debug(f"Seq group {seq_group.request_id}(program_id={seq_group.program_id}) is finished with negative TTL {ttl}. Freeing with multiplier.")
+                        self._free_finished_seq_group(seq_group, multiplier=multiplier)
+                    elif ttl < 2:
                         self._free_finished_seq_group(seq_group)
                     else:
                         self._pin_seq_group(seq_group, ttl, time.time())
