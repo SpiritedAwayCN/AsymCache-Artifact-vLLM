@@ -159,7 +159,7 @@ def analyze_jsonl(file_path):
 def summarize_folder(folder_path):
     results = []
     folder = Path(folder_path)
-    jsonl_files = [f for f in folder.rglob("*.jsonl") if f.name.startswith("3x")]
+    jsonl_files = [f for f in folder.rglob("*.jsonl")]
     print(f"Found {len(jsonl_files)} .jsonl files to process\n")
     for file_path in jsonl_files:
         print(f"Processing {file_path.relative_to(folder)} ...")
@@ -211,16 +211,16 @@ def write_summary_csv(results, output_csv="summary.csv"):
 
 if __name__ == "__main__":
     folders = [
-        "3x_LRU_qps3.0",
-        "./3x_CONTINUUM_qps3.0-longttlv2",
-        "./3x_CONTINUUM_MWF_qps3.0-longttlv2",
-        "./3x_CONTINUUM_qps3.0-shortttl-v2",
-        "./3x_CONTINUUM_MWF_qps3.0-shortttl-v3",
-        "./3x_CONTINUUM_MWF_qps3.0-shortttl-v2",
-        "./3x_CONTINUUM_qps3.0-shortttl-log",
-        "./3x_CONTINUUM_MWF_qps3.0-shortttl-log",
+        "./double_data/LRU_qps1.0_prefill4",
+        "../new_results/2x_MWF_qps1.0",
+        "../new_results/2x_CONTINUUM_qps1.0",
+        "../new_results/2x_CONTINUUM_MWF_qps1.0",
+        "./double_data/LRU_qps2.0_prefill4",
+        "../new_results/2x_MWF_qps2.0",
+        "../new_results/2x_CONTINUUM_qps2.0",
+        "../new_results/2x_CONTINUUM_MWF_qps2.0",
     ]
     all_results = []
     for folder in folders:
         all_results.extend(summarize_folder(folder))
-    write_summary_csv(all_results, output_csv="sum.csv")
+    write_summary_csv(all_results, output_csv="new_res_sum.csv")

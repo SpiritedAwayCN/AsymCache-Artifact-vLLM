@@ -1,10 +1,10 @@
 #!/bin/bash
 export VLLM_USE_V1=0
 export NCCL_ALGO=Ring
-export VLLM_PORT=12359
+export VLLM_PORT=12416
 export VLLM_USE_POD_ATTN=1
 export TRANSFORMERS_OFFLINE=1
-export VLLM_LOGGING_LEVEL=DEBUG
+export VLLM_LOGGING_LEVEL=INFO
 export HF_ENDPOINT=https://hf-mirror.com
 export VLLM_ALLOW_DEPRECATED_BLOCK_MANAGER_V1=1
 export VLLM_HOST_IP=$(hostname -I | awk '{print $1}')
@@ -15,12 +15,11 @@ export HUGGINGFACE_HUB_CACHE=/jizhicfs/marvinhjia/sca/models/huggingface/hub
 export USE_MINEXP=2
 export VLLM_EVICTOR_POLICY=mwf
 export MINEXP_A=0
-export MINEXP_B=-9.750000e+00
-export MINEXP_ALPHA=9.491222e+01
-export MINEXP_BETA=2.372805e+00
-export SCHEDULE_LOG_PATH="./results/new_param_3x_MWF_qps3.0/schedule_qps3.0.log"
-
-mkdir -p ./results/new_param_3x_MWF_qps3.0
+export MINEXP_B=-2.010611e+01
+export MINEXP_ALPHA=7.124777e+03
+export MINEXP_BETA=1.781194e+02
+export SCHEDULE_LOG_PATH="./new_results/2x_MWF_qps1.0/schedule_qps1.0.log"
+# mkdir -p ./new_results/2x_MWF_qps1.0
 
 if python -c "import quart" &> /dev/null; then
     echo "Quart is already installed."
@@ -38,7 +37,7 @@ wait_for_server() {
     done" && return 0 || return 1
 }
 
-LOG_FILE=./results/new_param_3x_MWF_qps3.0/server_output_qps3.0.log
+LOG_FILE=./new_results/2x_MWF_qps1.0/server_output_qps1.0.log
 # prefilling instance
 CUDA_VISIBLE_DEVICES=0,1,2,3 /jizhicfs/marvinhjia/miniconda3/envs/sca-vllm-dev/bin/python3 \
     -m vllm.entrypoints.openai.api_server \
@@ -56,7 +55,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 /jizhicfs/marvinhjia/miniconda3/envs/sca-vllm-dev/b
     --gpu-memory-utilization 0.8 \
     > ${LOG_FILE} 2>&1 &
 
-sleep 450
+sleep 550
 wait_for_server 8059
 python agent_interface_mwf_agent.py
 sleep infinity

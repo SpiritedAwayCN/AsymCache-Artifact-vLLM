@@ -14,15 +14,15 @@ from transformers import AutoTokenizer
 model = "/jizhicfs/marvinhjia/sca/models/huggingface/hub/models--meta-llama--Llama-3.1-70B-Instruct/snapshots/1605565b47bb9346c5515c34102e054115b4f98b"
 vllm_host_ip = os.popen("hostname -I | awk '{print $1}'").read().strip()
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=150 * 60 * 60)
-API_URL = "http://127.0.0.1:8055/v1/completions"
+API_URL = "http://127.0.0.1:8052/v1/completions"
 tokenizer = AutoTokenizer.from_pretrained(model)
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--input_file", "-i", type=str, default="./data/3x_bfcl_web_search_prompts_qps3.0.csv")
-    parser.add_argument("--output_file","-o", type=str, default="./results/3x_LRU_qps3.0/3x_LRU_replay_output_qps3.0.jsonl")
+    parser.add_argument("--input_file", "-i", type=str, default="./data/2x_bfcl_web_search_prompts_qps2.0.csv")
+    parser.add_argument("--output_file","-o", type=str, default="./new_results/2x_LRU_qps2.0/2x_LRU_replay_output_qps2.0.jsonl")
     # 输入文件字段名
     parser.add_argument("--timestamp_col", type=str, default="Timestamp")
     parser.add_argument("--sample_col", type=str, default="sample_id")
