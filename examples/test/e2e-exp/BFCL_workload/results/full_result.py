@@ -5,6 +5,19 @@ import math
 from pathlib import Path
 
 
+# 计算百分位数
+def percentile(values, p):
+    if not values:
+        return 0
+    values = sorted(values)
+    k = (len(values) - 1) * p / 100
+    f = math.floor(k)
+    c = math.ceil(k)
+    if f == c:
+        return values[int(k)]
+    return values[f] * (c - k) + values[c] * (k - f)
+
+
 def analyze_jsonl(file_path):
     tbt_list = []
     ttft_list = []
@@ -122,7 +135,9 @@ def analyze_jsonl(file_path):
     session_count = len(job_latencies)
     avg_job_latency = sum(job_latencies) / session_count if session_count else 0
     max_job_latency = max(job_latencies) if job_latencies else 0
-
+    job_latency_p90 = percentile(job_latencies, 90)
+    job_latency_p95 = percentile(job_latencies, 95)
+    job_latency_p98 = percentile(job_latencies, 98)
     multi_rate = multi_cache / total if total > 0 else 0
     single_rate = single_cache / total if total > 0 else 0
     avg_hit_rate = total_hit_rate / total if total > 0 else 0.0
@@ -151,6 +166,9 @@ def analyze_jsonl(file_path):
         "session_count": session_count,
         "avg_job_latency": avg_job_latency,
         "max_job_latency": max_job_latency,
+        "job_latency_p90": job_latency_p90,
+        "job_latency_p95": job_latency_p95,
+        "job_latency_p98": job_latency_p98,
         "total_time": tpt,
         "throughput": throughput,
     }
@@ -177,12 +195,12 @@ def summarize_folder(folder_path):
 def write_summary_csv(results, output_csv="summary.csv"):
     if not results:
         return
-    with open(output_csv, "w", newline="", encoding="utf-8") as csvf:
+    with open(output_csv, "a", newline="", encoding="utf-8") as csvf:
         writer = csv.DictWriter(csvf, fieldnames=[
             "file", "total_items", "avg_tbt", "avg_ttft", "avg_tpot", "avg_new_ttft", "avg_new_tpot",
             "hit_items", "avg_ttft_hit", "avg_new_ttft_hit", "avg_hit_rate", "multi_cache_rate",
-            "single_cache_rate", "session_count", "avg_job_latency", "max_job_latency",
-            "total_time", "throughput"
+            "single_cache_rate", "session_count", "avg_job_latency", "max_job_latency", "job_latency_p90",
+            "job_latency_p95", "job_latency_p98", "total_time", "throughput"
         ])
         writer.writeheader()
         for r in results:
@@ -203,6 +221,9 @@ def write_summary_csv(results, output_csv="summary.csv"):
                 "session_count": r["session_count"],
                 "avg_job_latency": f"{r['avg_job_latency']:.6f}",
                 "max_job_latency": f"{r['max_job_latency']:.6f}",
+                "job_latency_p90": f"{r['job_latency_p90']:.6f}",
+                "job_latency_p95": f"{r['job_latency_p95']:.6f}",
+                "job_latency_p98": f"{r['job_latency_p98']:.6f}",
                 "total_time": f"{r['total_time']:.6f}",
                 "throughput": f"{r['throughput']:.6f}",
             })
@@ -210,17 +231,10 @@ def write_summary_csv(results, output_csv="summary.csv"):
 
 
 if __name__ == "__main__":
-    folders = [
-        "./double_data/LRU_qps1.0_prefill4",
-        "../new_results/2x_MWF_qps1.0",
-        "../new_results/2x_CONTINUUM_qps1.0",
-        "../new_results/2x_CONTINUUM_MWF_qps1.0",
-        "./double_data/LRU_qps2.0_prefill4",
-        "../new_results/2x_MWF_qps2.0",
-        "../new_results/2x_CONTINUUM_qps2.0",
-        "../new_results/2x_CONTINUUM_MWF_qps2.0",
-    ]
+    root_dir = Path("../70B_results/new_2x_MWF_qps3.0")
+    folders = sorted({jsonl_file.parent for jsonl_file in root_dir.rglob("*.jsonl")})
+    print(f"Found {len(folders)} folders containing jsonl files:")
     all_results = []
     for folder in folders:
         all_results.extend(summarize_folder(folder))
-    write_summary_csv(all_results, output_csv="new_res_sum.csv")
+    write_summary_csv(all_results, output_csv="final_70B_summary.csv")

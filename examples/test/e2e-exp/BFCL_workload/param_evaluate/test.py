@@ -12,7 +12,7 @@ DEFAULT_API_URL = "http://127.0.0.1:8056/v1/completions"
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_csv", "-i", type=str, required=True)
-    parser.add_argument("--model", default="/jizhicfs/marvinhjia/sca/models/huggingface/hub/models--meta-llama--Llama-3.1-70B-Instruct/snapshots/1605565b47bb9346c5515c34102e054115b4f98b")
+    parser.add_argument("--model", default="/jizhicfs/marvinhjia/sca/models/huggingface/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659")
     parser.add_argument("--api_url", type=str, default=DEFAULT_API_URL)
     parser.add_argument("--prompt_col", type=str, default="prompt_text")
     parser.add_argument("--output_col", type=str, default="output_text")

@@ -18,7 +18,7 @@ export MINEXP_A=0
 export MINEXP_B=-5.108343e+02
 export MINEXP_ALPHA=1.821221e+03
 export MINEXP_BETA=4.553053e+01
-export SCHEDULE_LOG_PATH="3x_schedule.log"
+export SCHEDULE_LOG_PATH="schedule.log"
 
 if python -c "import quart" &> /dev/null; then
     echo "Quart is already installed."
@@ -36,12 +36,12 @@ wait_for_server() {
     done" && return 0 || return 1
 }
 
-LOG_FILE=3x_server_output.log
+LOG_FILE=server_output.log
 # prefilling instance
-CUDA_VISIBLE_DEVICES=4,5,6,7 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm/bin/python3 \
+CUDA_VISIBLE_DEVICES=7 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm/bin/python3 \
     -m vllm.entrypoints.openai.api_server \
-    --model /jizhicfs/marvinhjia/sca/models/huggingface/hub/models--meta-llama--Llama-3.1-70B-Instruct/snapshots/1605565b47bb9346c5515c34102e054115b4f98b \
-    -tp 4 \
+    --model /jizhicfs/marvinhjia/sca/models/huggingface/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659 \
+    -tp 1 \
     --port 8056 \
     --block-size 64 \
     --dtype float16 \
@@ -54,9 +54,9 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm
     --gpu-memory-utilization 0.8 \
     > ${LOG_FILE} 2>&1 &
 
-sleep 405
+sleep 500
 wait_for_server 8056
-python test.py -i ../data/3x_bfcl_web_search_prompts_qps3.0.csv --api_url http://127.0.0.1:8056/v1/completions --warmup 3 --num_runs 20 --use_nonce
+python test.py -i ../data/2x_bfcl_web_search_prompts_qps1.0.csv --api_url http://127.0.0.1:8056/v1/completions --warmup 3 --num_runs 20 --use_nonce
 sleep infinity
 # Cleanup commands, suppressing their output
 ps -e | grep pt_main_thread | awk '{print $1}' | xargs kill -9 > /dev/null 2>&1

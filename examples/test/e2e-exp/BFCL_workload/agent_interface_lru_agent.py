@@ -21,8 +21,8 @@ tokenizer = AutoTokenizer.from_pretrained(model)
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--input_file", "-i", type=str, default="./data/2x_bfcl_web_search_prompts_qps2.0.csv")
-    parser.add_argument("--output_file","-o", type=str, default="./new_results/2x_LRU_qps2.0/2x_LRU_replay_output_qps2.0.jsonl")
+    parser.add_argument("--input_file", "-i", type=str, default="./data/2x_bfcl_web_search_prompts_qps3.0.csv")
+    parser.add_argument("--output_file","-o", type=str, default="./70B_results/2x_LRU_qps3.0/2x_LRU_replay_output_qps3.0.jsonl")
     # 输入文件字段名
     parser.add_argument("--timestamp_col", type=str, default="Timestamp")
     parser.add_argument("--sample_col", type=str, default="sample_id")
@@ -229,7 +229,9 @@ async def replay_one_session(session_info, output_file, file_lock, global_t0_mon
             tool_names = parse_tool_names_from_output(output_text)
             ttl = sample_tools_sleep(tool_names, no_random=True)
             tool_sleep = sample_tools_sleep(tool_names, no_random=False)
-            
+            if local_iteration == len(rows) - 1:
+                # last step
+                ttl = -1
             await fetch_one_llm(
                 http_session=http_session,
                 row=row,
@@ -239,7 +241,6 @@ async def replay_one_session(session_info, output_file, file_lock, global_t0_mon
                 program_id=session_info["session_key"],
                 ttl=ttl
             )
-            
             
             if local_iteration == len(rows) - 1:
                 break

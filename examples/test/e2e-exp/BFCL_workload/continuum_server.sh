@@ -19,8 +19,8 @@ export MINEXP_A=0
 export MINEXP_B=-2.010611e+01
 export MINEXP_ALPHA=7.124777e+03
 export MINEXP_BETA=1.781194e+02
-export SCHEDULE_LOG_PATH="./new_results/2x_CONTINUUM_qps0.5/schedule_qps0.5.log"
-# mkdir -p ./results/2x_CONTINUUM_qps0.5
+export SCHEDULE_LOG_PATH="./70B_results/2x_CONTINUUM_qps3.0/schedule_qps3.0.log"
+# mkdir -p ./results/2x_CONTINUUM_qps3.0
 
 if python -c "import quart" &> /dev/null; then
     echo "Quart is already installed."
@@ -38,9 +38,8 @@ wait_for_server() {
     done" && return 0 || return 1
 }
 
-LOG_FILE=./new_results/2x_CONTINUUM_qps0.5/server_output_qps0.5.log
-# prefilling instance
-CUDA_VISIBLE_DEVICES=0,1,2,3 /jizhicfs/marvinhjia/miniconda3/envs/sca-vllm-dev/bin/python3 \
+LOG_FILE=./70B_results/2x_CONTINUUM_qps3.0/server_output_qps3.0.log
+CUDA_VISIBLE_DEVICES=0,1,2,3 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm/bin/python3 \
     -m vllm.entrypoints.openai.api_server \
     --model /jizhicfs/marvinhjia/sca/models/huggingface/hub/models--meta-llama--Llama-3.1-70B-Instruct/snapshots/1605565b47bb9346c5515c34102e054115b4f98b \
     -tp 4 \

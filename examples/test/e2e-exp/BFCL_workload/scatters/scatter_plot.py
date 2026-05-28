@@ -1,23 +1,22 @@
-import argparse
 import json
 import math
-
+import argparse
+import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-import pandas as pd
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", "-i", default="../results/MWF_qps3.0/MWF_replay_output_qps3.0.jsonl")
-    parser.add_argument("--output", "-o", default="qps3.0_gap_blocks_scatter.png")
+    parser.add_argument("--input", "-i", default="../8B_results/2x_MWF_qps0.5/2x_MWF_replay_output_qps0.5.jsonl")
+    parser.add_argument("--output", "-o", default="qps0.5_gap_blocks_scatter.png")
     parser.add_argument("--block_size", type=int, default=64)
-    parser.add_argument("--cache_capacity_blocks", type=float, default=7893)
+    parser.add_argument("--cache_capacity_blocks", type=float, default=7621)
     parser.add_argument("--sample_col", default="sample_id")
     parser.add_argument("--turn_col", default="turn_id")
     parser.add_argument("--iteration_col", default="iteration")
     parser.add_argument("--order_col", default=None)
-    parser.add_argument("--title", default="Gap Blocks Distribution(qps3.0)")
+    parser.add_argument("--title", default="Gap Blocks Distribution(qps0.5)")
     return parser.parse_args()
 
 
@@ -105,6 +104,7 @@ def main():
         linewidth=2,
         label=f"Cache Capacity ({args.cache_capacity_blocks:g} Blocks)",
     )
+    
     ax = plt.gca()
     ax.xaxis.set_major_locator(ticker.MultipleLocator(max(1, len(df) // 40)))
     plt.xticks(rotation=45, fontsize=8)
