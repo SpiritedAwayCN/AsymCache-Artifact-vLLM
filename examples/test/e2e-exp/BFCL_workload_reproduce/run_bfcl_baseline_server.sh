@@ -98,7 +98,7 @@ if [[ -z "${QPS}" ]]; then
 fi
 
 RESULT_PREFIX=${RESULT_PREFIX:-2x}
-DATA_DIR=${DATA_DIR:-./data}
+DATA_DIR=${DATA_DIR:-/jizhicfs/marvinhjia/sca/yilin/multi-segment-attention/BFCL_dataset}
 RESULT_ROOT=${RESULT_ROOT:-./${MODEL_SIZE}_results}
 RUN_NAME=${RUN_NAME:-${RESULT_PREFIX}_${BASELINE}_qps${QPS}}
 RESULT_DIR=${RESULT_DIR:-${RESULT_ROOT}/${RUN_NAME}}

@@ -2,7 +2,10 @@ import os
 import csv
 import json
 import math
+import argparse
 from pathlib import Path
+
+
 def analyze_jsonl(file_path):
     tbt_list = []
     ttft_list = []
@@ -186,6 +189,12 @@ def summarize_folder(folder_path, output_csv="summary.csv"):
         print(f"\nSummary saved to {output_csv}")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="result_analyse")
+    parser.add_argument("--folder",type=str,required=True)
+    parser.add_argument("--output_csv",type=str,default="summary.csv")
+    return parser.parse_args()
+
 if __name__ == "__main__":
-    folder = "/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/GPT_results"
-    summarize_folder(folder, output_csv="summary.csv")
+    args = parse_args()
+    summarize_folder(args.folder, args.output_csv)
