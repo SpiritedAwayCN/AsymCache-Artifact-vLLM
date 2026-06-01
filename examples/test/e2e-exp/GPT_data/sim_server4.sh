@@ -15,7 +15,7 @@ export MINEXP_A=0
 export MINEXP_B=-5.219893e+01
 export MINEXP_ALPHA=5.176348e+03
 export MINEXP_BETA=1.294087e+02
-export SCHEDULE_LOG_PATH="/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/GPT_results/high_sharegpt_lru_70B_overall_qps1.00_frac10_CV0.25_schedule.log"
+export SCHEDULE_LOG_PATH="/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/GPT_results/schedule_logs/sharegpt_8B_lru_overall_qps1.00_frac10_CV0.25_schedule.log"
 export VLLM_EVICTOR_POLICY=lru
 # export CUDA_LAUNCH_BLOCKING=1
 export HF_ENDPOINT=https://hf-mirror.com
@@ -39,20 +39,19 @@ wait_for_server() {
 }
 
 # prefilling instance, which is the KV producer
-CUDA_VISIBLE_DEVICES=4,5,6,7 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm/bin/python3 \
+CUDA_VISIBLE_DEVICES=1 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm/bin/python3 \
     -m vllm.entrypoints.openai.api_server \
-    --model /jizhicfs/marvinhjia/sca/models/huggingface/hub/models--meta-llama--Llama-3.1-70B-Instruct/snapshots/1605565b47bb9346c5515c34102e054115b4f98b \
-    -tp 4 \
+    --model /jizhicfs/marvinhjia/sca/models/huggingface/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659 \
+    -tp 1 \
     --port 8048 \
     --block-size 64 \
     --dtype float16 \
     --enable-prefix-caching \
     --enable-chunked-prefill \
-    --max-model-len 75000 \
-    --num-gpu-blocks-override 1500 \
+    --max-model-len 250000 \
     --max_num_batched_tokens 8192 \
     --gpu-memory-utilization 0.8 \
-    > high_sharegpt_70B_lru_overall_qps1.00_frac10_CV0.25_server_output.log 2>&1 &
+    > ../GPT_results/server_outputs/sharegpt_8B_lru_overall_qps1.00_frac10_CV0.25_server_output.log 2>&1 &
     # --collect_detailed_traces all \
     # --enforce-eager \
 

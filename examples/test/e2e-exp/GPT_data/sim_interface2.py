@@ -21,9 +21,9 @@ args = parser.parse_args()
 
 
 input_file = "ShareGPT_outputs_gamma_qps10_CV0.25_70B_1.0.csv"
-output_file_name = f"/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/GPT_results/high_sharegpt_mwf_70B_overall_qps1.00_frac10_CV0.25.jsonl"
+output_file_name = f"/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/GPT_results/ShareGPT_simulator_mwf_8B_overall_qps1.00_frac10_CV0.25.jsonl"
 df = pd.read_csv(input_file)
-model = "/jizhicfs/marvinhjia/sca/models/huggingface/hub/models--meta-llama--Llama-3.1-70B-Instruct/snapshots/1605565b47bb9346c5515c34102e054115b4f98b"
+model = "/jizhicfs/marvinhjia/sca/models/huggingface/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659"
 tokenizer = AutoTokenizer.from_pretrained(model)
 
 # load datasets

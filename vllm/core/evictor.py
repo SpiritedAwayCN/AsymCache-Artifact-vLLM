@@ -537,7 +537,11 @@ class PensieveEvictor(Evictor):
         chosen = -1
         chosen_val = 0
         for blk_id in self.block_list:
-            blk_val = self.free_table[blk_id].func / (time.time() - self.free_table[blk_id].last_accessed)
+            import os
+            if os.getenv('PENSIEVE_OLD_FREQ', '0') == '1':
+                blk_val = self.free_table[blk_id].func / self.free_table[blk_id].total_count
+            else:
+                blk_val = self.free_table[blk_id].func / (time.time() - self.free_table[blk_id].last_accessed)
             if chosen == -1 or blk_val < chosen_val:
                 chosen = blk_id
                 chosen_val = blk_val

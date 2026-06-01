@@ -231,10 +231,10 @@ def write_summary_csv(results, output_csv="summary.csv"):
 
 
 if __name__ == "__main__":
-    root_dir = Path("../70B_results/new_2x_MWF_qps3.0")
+    root_dir = Path("../8B_results/2x_CONTINUUM_MWF_qps1.75")
     folders = sorted({jsonl_file.parent for jsonl_file in root_dir.rglob("*.jsonl")})
     print(f"Found {len(folders)} folders containing jsonl files:")
     all_results = []
     for folder in folders:
         all_results.extend(summarize_folder(folder))
-    write_summary_csv(all_results, output_csv="final_70B_summary.csv")
+    write_summary_csv(all_results, output_csv="final_8B_summary.csv")

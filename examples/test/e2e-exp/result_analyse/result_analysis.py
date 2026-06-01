@@ -187,5 +187,5 @@ def summarize_folder(folder_path, output_csv="summary.csv"):
 
 
 if __name__ == "__main__":
-    folder = "/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/correct_results/300_longbench_pensieve_no_only_seg2_70B_overall_qps0.01_frac10_CV0.25_gamma"
+    folder = "/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/GPT_results"
     summarize_folder(folder, output_csv="summary.csv")

@@ -16,11 +16,14 @@ export USE_CONTINUUM=1
 export USE_MINEXP=2
 export VLLM_EVICTOR_POLICY=mwf
 export MINEXP_A=0
-export MINEXP_B=-2.010611e+01
-export MINEXP_ALPHA=7.124777e+03
-export MINEXP_BETA=1.781194e+02
-export SCHEDULE_LOG_PATH="./70B_results/2x_CONTINUUM_MWF_qps3.0/schedule_qps3.0.log"
-# mkdir -p ./results/2x_CONTINUUM_MWF_qps0.5
+# export MINEXP_B=-2.010611e+01
+# export MINEXP_ALPHA=7.124777e+03
+# export MINEXP_BETA=1.781194e+02
+export MINEXP_B=-1.353967e+01
+export MINEXP_ALPHA=4.797900e+03
+export MINEXP_BETA=1.199475e+02
+export SCHEDULE_LOG_PATH="./8B_results/2x_CONTINUUM_MWF_qps1.75/schedule_qps1.75.log"
+# mkdir -p ./results/8B_CONTINUUM_MWF_qps1.75
 
 if python -c "import quart" &> /dev/null; then
     echo "Quart is already installed."
@@ -38,11 +41,11 @@ wait_for_server() {
     done" && return 0 || return 1
 }
 
-LOG_FILE=./70B_results/2x_CONTINUUM_MWF_qps3.0/server_output_qps3.0.log
-CUDA_VISIBLE_DEVICES=0,1,2,3 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm/bin/python3 \
+LOG_FILE=./8B_results/2x_CONTINUUM_MWF_qps1.75/server_output_qps1.75.log
+CUDA_VISIBLE_DEVICES=0 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm/bin/python3 \
     -m vllm.entrypoints.openai.api_server \
-    --model /jizhicfs/marvinhjia/sca/models/huggingface/hub/models--meta-llama--Llama-3.1-70B-Instruct/snapshots/1605565b47bb9346c5515c34102e054115b4f98b \
-    -tp 4 \
+    --model /jizhicfs/marvinhjia/sca/models/huggingface/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659 \
+    -tp 1 \
     --port 8153 \
     --block-size 64 \
     --dtype float16 \
@@ -55,7 +58,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm
     --gpu-memory-utilization 0.8 \
     > ${LOG_FILE} 2>&1 &
 
-sleep 520
+sleep 85
 wait_for_server 8153
 python agent_interface_continuum_mwf.py
 sleep infinity

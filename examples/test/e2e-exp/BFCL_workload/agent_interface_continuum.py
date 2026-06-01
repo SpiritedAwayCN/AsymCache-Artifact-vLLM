@@ -11,18 +11,18 @@ import pandas as pd
 from transformers import AutoTokenizer
 
 
-model = "/jizhicfs/marvinhjia/sca/models/huggingface/hub/models--meta-llama--Llama-3.1-70B-Instruct/snapshots/1605565b47bb9346c5515c34102e054115b4f98b"
+model = "/jizhicfs/marvinhjia/sca/models/huggingface/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659"
 vllm_host_ip = os.popen("hostname -I | awk '{print $1}'").read().strip()
 AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=150 * 60 * 60)
-API_URL = "http://127.0.0.1:8156/v1/completions"
+API_URL = "http://127.0.0.1:8166/v1/completions"
 tokenizer = AutoTokenizer.from_pretrained(model)
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--input_file", "-i", type=str, default="./data/2x_bfcl_web_search_prompts_qps3.0.csv")
-    parser.add_argument("--output_file","-o", type=str, default="./70B_results/2x_CONTINUUM_qps3.0/2x_CONTINUUM_replay_output_qps3.0.jsonl")
+    parser.add_argument("--input_file", "-i", type=str, default="./data/2x_bfcl_web_search_prompts_qps1.75.csv")
+    parser.add_argument("--output_file","-o", type=str, default="./8B_results/2x_CONTINUUM_qps1.75/2x_CONTINUUM_replay_output_qps1.75.jsonl")
     # 输入文件字段名
     parser.add_argument("--timestamp_col", type=str, default="Timestamp")
     parser.add_argument("--sample_col", type=str, default="sample_id")

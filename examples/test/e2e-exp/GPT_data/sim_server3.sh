@@ -11,13 +11,13 @@ export VLLM_USE_V1=0
 export VLLM_USE_POD_ATTN=1
 # export VLLM_SCHEDULE_ONE_PREFILL=1
 # export VLLM_ONLY_KEEP_SEG2=1
-export USE_MINEXP=0
-export MINEXP_A=0
-export MINEXP_B=-5.219893e+01
-export MINEXP_ALPHA=5.176348e+03
-export MINEXP_BETA=1.294087e+02
-export SCHEDULE_LOG_PATH="/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/GPT_results/low_sharegpt_pensieve_70B_overall_qps1.00_frac10_CV0.25_schedule.log"
-export VLLM_EVICTOR_POLICY=pensieve
+export USE_MINEXP=2
+export MINEXP_A=0.0
+export MINEXP_B=-1.520357e+02
+export MINEXP_ALPHA=1.507674e+04
+export MINEXP_BETA=3.769185e+02
+export SCHEDULE_LOG_PATH="/jizhicfs/marvinhjia/sca/yilin/vllm-dev/examples/test/e2e-exp/GPT_results/sharegpt_8B_mwf_overall_qps1.00_frac100_CV0.25_schedule.log"
+export VLLM_EVICTOR_POLICY=mwf
 # export CUDA_LAUNCH_BLOCKING=1
 export HF_ENDPOINT=https://hf-mirror.com
 export NCCL_ALGO=Ring
@@ -40,20 +40,19 @@ wait_for_server() {
 }
 
 # prefilling instance, which is the KV producer
-CUDA_VISIBLE_DEVICES=0,1,2,3 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm/bin/python3 \
+CUDA_VISIBLE_DEVICES=6 /jizhicfs/marvinhjia/miniconda3/envs/chenyilin-vllm/bin/python3 \
     -m vllm.entrypoints.openai.api_server \
-    --model /jizhicfs/marvinhjia/sca/models/huggingface/hub/models--meta-llama--Llama-3.1-70B-Instruct/snapshots/1605565b47bb9346c5515c34102e054115b4f98b \
-    -tp 4 \
+    --model /jizhicfs/marvinhjia/sca/models/huggingface/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659 \
+    -tp 1 \
     --port 8042 \
     --block-size 64 \
     --dtype float16 \
     --enable-prefix-caching \
     --enable-chunked-prefill \
-    --max-model-len 55000 \
-    --num-gpu-blocks-override 1000 \
+    --max-model-len 250000 \
     --max_num_batched_tokens 8192 \
     --gpu-memory-utilization 0.8 \
-    > low_sharegpt_70B_pensieve_overall_qps1.00_frac10_CV0.25_server_output.log 2>&1 &
+    > ../GPT_results/sharegpt_8B_mwf_overall_qps1.00_frac100_CV0.25_server_output.log 2>&1 &
     # --collect_detailed_traces all \
     # --enforce-eager \
 

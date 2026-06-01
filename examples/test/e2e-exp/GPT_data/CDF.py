@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-csv_files = ["ShareGPT_outputs_gamma_qps10_CV0.25_70B_1.0.csv"]
+csv_files = ["ShareGPT_outputs_gamma_qps100_CV0.25_70B_1.0.csv"]
 
 titles = [
     "q1=0.017, q2=0.00017",
