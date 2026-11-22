@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-
+import json
+import os
 import pickle
 import signal
+import time
 from contextlib import contextmanager
+from dataclasses import asdict, is_dataclass
 from typing import Iterator, List, Optional, Union
 
 import cloudpickle
@@ -111,6 +114,26 @@ class MQLLMEngine:
         # Error state.
         self._errored_with: Optional[BaseException] = None
 
+        # BEGIN MULTI-SEG CACHE
+        # Persist final engine metadata independently of the HTTP connection.
+        # A replay client can recover metrics from this file when delivery of
+        # the OpenAI response fails after inference has completed.
+        self._request_outputs_path = os.getenv("VLLM_REQUEST_OUTPUTS_FILE")
+        self._request_outputs_file = None
+        if self._request_outputs_path:
+            output_dir = os.path.dirname(self._request_outputs_path)
+            if output_dir:
+                os.makedirs(output_dir, exist_ok=True)
+            self._request_outputs_file = open(  # noqa: SIM115
+                self._request_outputs_path,
+                "a",
+                encoding="utf-8",
+                buffering=1,
+            )
+            logger.info("Writing final RequestOutput metadata to %s",
+                        self._request_outputs_path)
+        # END MULTI-SEG CACHE
+
     @property
     def dead_error(self) -> BaseException:
         if self._errored_with is not None:
@@ -170,6 +193,11 @@ class MQLLMEngine:
 
     def cleanup(self):
         """Cleanup zeromq state on shutdown."""
+        # BEGIN MULTI-SEG CACHE
+        if self._request_outputs_file is not None:
+            self._request_outputs_file.close()
+            self._request_outputs_file = None
+        # END MULTI-SEG CACHE
         # Closes all sockets and destroys context.
         self.ctx.destroy(linger=0)
         del self.engine
@@ -312,7 +340,8 @@ class MQLLMEngine:
                 prompt_adapter_request=request.prompt_adapter_request,
                 priority=request.priority,
                 program_id=request.program_id,
-                estimated_ttl=request.estimated_ttl,)
+                estimated_ttl=request.estimated_ttl,
+            )
 
             if self.log_requests:
                 logger.info("Added request %s.", request.request_id)
@@ -375,6 +404,9 @@ class MQLLMEngine:
         - A response from loading a lora adapter
         """
         if outputs:
+            # BEGIN MULTI-SEG CACHE
+            self._persist_finished_request_outputs(outputs)
+            # END MULTI-SEG CACHE
             try:
                 from ray.exceptions import RayTaskError
 
@@ -388,6 +420,72 @@ class MQLLMEngine:
 
             output_bytes = pickle.dumps(outputs)
             self.output_socket.send_multipart((output_bytes, ), copy=False)
+
+    # BEGIN MULTI-SEG CACHE
+    @staticmethod
+    def _json_safe(value):
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return value
+        if isinstance(value, (list, tuple)):
+            return [MQLLMEngine._json_safe(item) for item in value]
+        if isinstance(value, dict):
+            return {
+                str(key): MQLLMEngine._json_safe(item)
+                for key, item in value.items()
+            }
+        if is_dataclass(value):
+            return MQLLMEngine._json_safe(asdict(value))
+        return repr(value)
+
+    def _persist_finished_request_outputs(
+            self, outputs: REQUEST_OUTPUTS_T) -> None:
+        if self._request_outputs_file is None or not isinstance(outputs, list):
+            return
+
+        for request_output in outputs:
+            if (not isinstance(request_output, RequestOutput)
+                    or not request_output.finished):
+                continue
+            try:
+                completion_metadata = []
+                completion_tokens = 0
+                for completion in request_output.outputs:
+                    token_ids = completion.token_ids
+                    token_count = (1 if isinstance(token_ids, int)
+                                   else len(token_ids))
+                    completion_tokens += token_count
+                    completion_metadata.append({
+                        "index": completion.index,
+                        "completion_tokens": token_count,
+                        "finish_reason": completion.finish_reason,
+                        "stop_reason": self._json_safe(
+                            completion.stop_reason),
+                    })
+
+                prompt_tokens = len(request_output.prompt_token_ids or [])
+                record = {
+                    "schema_version": 1,
+                    "request_id": request_output.request_id,
+                    "finished": True,
+                    "logged_at": time.time(),
+                    "metrics": self._json_safe(request_output.metrics),
+                    "usage": {
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "total_tokens": prompt_tokens + completion_tokens,
+                    },
+                    "outputs": completion_metadata,
+                    "num_cached_tokens": request_output.num_cached_tokens,
+                }
+                self._request_outputs_file.write(
+                    json.dumps(record, ensure_ascii=False) + "\n")
+                self._request_outputs_file.flush()
+            except Exception:
+                # Metadata persistence must never interrupt model serving.
+                logger.exception(
+                    "Failed to persist RequestOutput metadata for %s",
+                    getattr(request_output, "request_id", "unknown"))
+    # END MULTI-SEG CACHE
 
     def _send_healthy(self):
         """Send HEALTHY message to RPCClient."""

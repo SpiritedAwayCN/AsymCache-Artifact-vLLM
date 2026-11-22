@@ -1,4 +1,5 @@
 #include <pybind11/pybind11.h>
+#include <cstdint>
 #include <cmath>
 #include <set>
 #include <cstdio>
@@ -6,6 +7,8 @@
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_map>
+#include <vector>
 namespace py = pybind11;
 //T1->weight=frequency*delta_T, T1->last_accessed, T3->hash
 // base = 0.9 
@@ -231,6 +234,111 @@ public:
         return static_cast<T3>(s.size());
     }
 };
+
+struct HotPrefixBlock {
+    T3 content_hash;
+    T3 num_hashed_tokens;
+    std::uint64_t inserted_epoch;
+};
+
+class HotPrefixEvictorCore {
+    static constexpr T3 block_size = 64;
+    static constexpr T3 initial_clock = 256;
+
+    std::unordered_map<T3, HotPrefixBlock> blocks;
+    std::unordered_map<T3, T3> hit_counts;
+    std::uint64_t aging_epoch = 0;
+
+    T3 clock(const HotPrefixBlock &block) const {
+        const auto age = aging_epoch - block.inserted_epoch;
+        return age >= static_cast<std::uint64_t>(initial_clock)
+            ? 0
+            : initial_clock - static_cast<T3>(age);
+    }
+
+public:
+    void add(T3 block_id, T3 content_hash, T3 num_hashed_tokens) {
+        auto result = hit_counts.emplace(content_hash, 0);
+        if (!result.second) {
+            ++result.first->second;
+        }
+        blocks.insert_or_assign(
+            block_id,
+            HotPrefixBlock{content_hash, num_hashed_tokens, aging_epoch});
+    }
+
+    void aging_all() {
+        ++aging_epoch;
+    }
+
+    bool contains(T3 block_id) const {
+        return blocks.find(block_id) != blocks.end();
+    }
+
+    std::pair<T3, T3> evict() {
+        if (blocks.empty()) {
+            throw std::runtime_error("No usable cache memory left");
+        }
+
+        auto chosen = blocks.end();
+        T3 chosen_score = 0;
+        T3 chosen_clock = 0;
+        for (auto it = blocks.begin(); it != blocks.end(); ++it) {
+            const auto hit_count_it = hit_counts.find(it->second.content_hash);
+            const T3 hit_count = hit_count_it == hit_counts.end()
+                ? 0
+                : hit_count_it->second;
+            const T3 item_clock = clock(it->second);
+            const T3 score = hit_count * block_size + item_clock;
+            if (chosen == blocks.end()
+                    || score < chosen_score
+                    || (score == chosen_score
+                        && item_clock < chosen_clock)
+                    || (score == chosen_score
+                        && item_clock == chosen_clock
+                        && it->second.num_hashed_tokens
+                            > chosen->second.num_hashed_tokens)
+                    || (score == chosen_score
+                        && item_clock == chosen_clock
+                        && it->second.num_hashed_tokens
+                            == chosen->second.num_hashed_tokens
+                        && it->first < chosen->first)) {
+                chosen = it;
+                chosen_score = score;
+                chosen_clock = item_clock;
+            }
+        }
+
+        const T3 block_id = chosen->first;
+        const T3 content_hash = chosen->second.content_hash;
+        blocks.erase(chosen);
+        hit_counts.erase(content_hash);
+        return std::make_pair(block_id, content_hash);
+    }
+
+    T3 get_clock(T3 block_id) const {
+        const auto it = blocks.find(block_id);
+        if (it == blocks.end()) {
+            throw std::runtime_error("Block not found in HotPrefixEvictorCore");
+        }
+        return clock(it->second);
+    }
+
+    T3 get_hit_count(T3 content_hash) const {
+        const auto it = hit_counts.find(content_hash);
+        return it == hit_counts.end() ? 0 : it->second;
+    }
+
+    void remove(T3 block_id) {
+        if (blocks.erase(block_id) == 0) {
+            throw std::runtime_error("Block not found in HotPrefixEvictorCore");
+        }
+    }
+
+    T3 size() const {
+        return static_cast<T3>(blocks.size());
+    }
+};
 // struct ItemTanh {
 //     T1 w1, w2, func;
 //     T1 last_accessed;
@@ -380,6 +488,17 @@ PYBIND11_MODULE(c_set, m) {
         .def("min", &c_list_with_num::min)
         .def("pop_min", &c_list_with_num::pop_min)
         .def("size", &c_list_with_num::size);
+
+    py::class_<HotPrefixEvictorCore>(m, "HotPrefixEvictorCore")
+        .def(py::init<>())
+        .def("add", &HotPrefixEvictorCore::add)
+        .def("aging_all", &HotPrefixEvictorCore::aging_all)
+        .def("contains", &HotPrefixEvictorCore::contains)
+        .def("evict", &HotPrefixEvictorCore::evict)
+        .def("get_clock", &HotPrefixEvictorCore::get_clock)
+        .def("get_hit_count", &HotPrefixEvictorCore::get_hit_count)
+        .def("remove", &HotPrefixEvictorCore::remove)
+        .def("size", &HotPrefixEvictorCore::size);
 
 
     // py::class_<c_set_tanh>(m, "c_set_tanh")

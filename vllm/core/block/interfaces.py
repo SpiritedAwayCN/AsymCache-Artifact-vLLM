@@ -107,6 +107,9 @@ class Block(ABC):
 
 class BlockAllocator(ABC):
 
+    def aging_all(self) -> None:
+        pass
+
     @abstractmethod
     def allocate_mutable_block(self, prev_block: Optional[Block],
                                extra_hash: Optional[int]) -> Block:
@@ -211,6 +214,9 @@ class BlockAllocator(ABC):
 
 
 class DeviceAwareBlockAllocator(ABC):
+
+    def aging_all(self) -> None:
+        pass
 
     @abstractmethod
     def allocate_mutable_block(self,

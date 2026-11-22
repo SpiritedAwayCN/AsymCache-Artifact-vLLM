@@ -564,8 +564,28 @@ class Scheduler:
             evictor_policy = EvictionPolicy.BS
         elif evictor_policy_env == "pensieve":
             evictor_policy = EvictionPolicy.PENSIEVE
+        elif evictor_policy_env == "hotprefix":
+            evictor_policy = EvictionPolicy.HOTPREFIX
         else:
             raise ValueError(f"Unknown evictor policy {evictor_policy_env=}")
+
+        self._hotprefix_aging_interval = 0
+        self._hotprefix_free_count = 0
+        if evictor_policy == EvictionPolicy.HOTPREFIX:
+            if not self.cache_config.enable_prefix_caching:
+                raise ValueError("HOTPREFIX requires prefix caching")
+            self._hotprefix_aging_interval = int(os.getenv("AGING_INTERVAL", "1"))
+            if self._hotprefix_aging_interval <= 0:
+                raise ValueError("AGING_INTERVAL must be greater than 0")
+
+        self._simple_shed = os.getenv("VLLM_SIMPLE_SHED_ALGO") == "1"
+        self._simple_shed_max_chunk_size = 2048
+        if self._simple_shed:
+            self._simple_shed_max_chunk_size = int(
+                os.getenv("VLLM_SIMPLE_SHED_ALGO_MAX_CHUNK_SIZE", "2048"))
+            if self._simple_shed_max_chunk_size <= 0:
+                raise ValueError("VLLM_SIMPLE_SHED_ALGO_MAX_CHUNK_SIZE must be "
+                                 "greater than 0")
 
         # Create the block space manager.
         self.block_manager = BlockSpaceManagerImpl(
@@ -844,6 +864,8 @@ class Scheduler:
                 enable_chunking,
                 budget,
                 partial_prefill_metadata,
+                num_decodes=len(decode_seq_groups),
+                num_prefills=len(prefill_seq_groups),
             )
             # modified for multi-seg, num_cached_new_tokens might be non-zero
             num_new_tokens = num_uncached_new_tokens + num_cached_new_tokens
@@ -1175,6 +1197,8 @@ class Scheduler:
         partial_prefill_metadata: Optional[PartialPrefillMetadata] = None,
         max_schedule_prefills: int = -1,
         schedule_one: bool = False,
+        num_decodes: int = 0,
+        num_prefills: int = 0,
     ) -> SchedulerPrefillOutputs:
         """Schedule sequence groups that are in prefill stage.
 
@@ -1293,6 +1317,8 @@ class Scheduler:
                     enable_chunking,
                     budget,
                     partial_prefill_metadata=partial_prefill_metadata,
+                    num_decodes=num_decodes,
+                    num_prefills=num_prefills,
                 ))
             num_new_tokens = num_new_tokens_uncached + num_new_tokens_cached
             if debug_info["waiting_head_num_new_tokens_uncached"] is None:
@@ -1741,6 +1767,8 @@ class Scheduler:
             enable_chunking=True,
             partial_prefill_metadata=partial_prefill_metadata,
             schedule_one=schedule_one,
+            num_decodes=len(running_scheduled.decode_seq_groups),
+            num_prefills=len(running_scheduled.prefill_seq_groups),
         )
 
         assert (budget.num_batched_tokens
@@ -2070,6 +2098,11 @@ class Scheduler:
         """Free a sequence from a block table."""
         # logger.debug(f"Freeing seq {seq.seq_id} from block table, multiplier={multiplier}.")
         self.block_manager.free(seq, multiplier=multiplier)
+        if self._hotprefix_aging_interval:
+            self._hotprefix_free_count += 1
+            if self._hotprefix_free_count >= self._hotprefix_aging_interval:
+                self._hotprefix_free_count = 0
+                self.block_manager.aging_all()
 
     def _free_finished_seqs(self, seq_group: SequenceGroup, multiplier: float = 1) -> None:
         """Free finished seqs in a sequence group."""
@@ -2380,6 +2413,8 @@ class Scheduler:
         enable_chunking: bool,
         budget: SchedulingBudget,
         partial_prefill_metadata: Optional[PartialPrefillMetadata] = None,
+        num_decodes: int = 0,
+        num_prefills: int = 0,
     ) -> Tuple[int, int]:
         """
         Returns the number of new uncached and cached tokens to schedule for a
@@ -2488,6 +2523,13 @@ class Scheduler:
                 self.partial_prefill_budget_lookup_list,
                 partial_prefill_metadata,
             )
+            if self._simple_shed:
+                if num_decodes > 5:
+                    num_uncached_new_tokens = min(
+                        num_uncached_new_tokens, self._simple_shed_max_chunk_size)
+                if num_prefills:
+                    num_uncached_new_tokens = min(
+                        num_uncached_new_tokens, 8192 // num_prefills)
             
             # recompute the number of cached new tokens based on the num_uncached_new_tokens
             if seq_group.first_seq.is_prefill() and seq_group.first_seq.suffix_computed_block_locs[0] > 0:

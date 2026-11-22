@@ -141,6 +141,9 @@ class PrefixCachingBlockAllocator(BlockAllocator):
         self.test_force_nocache_begin = -1
         self.test_force_nocache_end = -1
 
+    def aging_all(self) -> None:
+        self.evictor.aging_all()
+
     def _create_block(
         self,
         prev_block: Optional[Block],

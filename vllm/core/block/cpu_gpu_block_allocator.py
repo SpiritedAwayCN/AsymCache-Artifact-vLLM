@@ -124,6 +124,9 @@ class CpuGpuBlockAllocator(DeviceAwareBlockAllocator):
             for block_id in allocator.all_block_ids:
                 self._block_ids_to_allocator[block_id] = allocator
 
+    def aging_all(self) -> None:
+        self._allocators[Device.GPU].aging_all()
+
     def allocate_or_get_null_block(self) -> Block:
         if self._null_block is None:
             self._null_block = NullBlock(

@@ -1,0 +1,3 @@
+Qwen_trace/**/*.sh text eol=lf
+hyper_parameter/*.sh text eol=lf
+reproduce/**/*.sh text eol=lf

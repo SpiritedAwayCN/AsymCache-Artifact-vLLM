@@ -24,12 +24,16 @@ class EvictionPolicy(enum.Enum):
     MWF_BS = enum.auto()
     BS = enum.auto()
     PENSIEVE = enum.auto()
+    HOTPREFIX = enum.auto()
 
 
 class Evictor(ABC):
     """The Evictor subclasses should be used by the BlockAllocator class to
     handle eviction of freed Blocks.
     """
+
+    def aging_all(self) -> None:
+        pass
 
     @abstractmethod
     def __init__(self):
@@ -429,7 +433,7 @@ class BSEvictor(Evictor):
         import os
         module_directory = os.environ.get("CSET_DIR", None)
         if module_directory is None:
-            looger.error("CSET_DIR environment variable not set")
+            logger.error("CSET_DIR environment variable not set")
         else:
             logger.info(f"Using c_list in CSET_DIR: {module_directory}")
         sys.path.append(module_directory)
@@ -483,21 +487,7 @@ class BSEvictor(Evictor):
 
     def update(self, block_id: int, last_accessed: float):
         """Update corresponding block's access time in metadata"""
-        logger.warning(f"BSEvictor does not support update operation, got block_id={block_id}, last_accessed={last_accessed}")
-        block = self.free_table.get(block_id)
-        if block is None:
-            raise ValueError(f"Block {block_id} not found in free_table")
-        self.list1.erase(block.total_count[0], block.last_accessed, block_id, block.num_hashed_tokens)
-        self.list2.erase(block.total_count[1], block.last_accessed, block_id, block.num_hashed_tokens)
-        exp1, exp2 = block.total_count
-        exp1 *= self.MINEXP_ALPHA ** (now - self.last_accessed)
-        exp1 += self.MINEXP_A
-        exp2 *= self.MINEXP_BETA ** (now - self.last_accessed)
-        exp2 += self.MINEXP_B
-        block.total_count = (exp1, exp2)
-        block.last_accessed = last_accessed
-        self.list1.insert(block.total_count[0], block.last_accessed, block_id, block.num_hashed_tokens)
-        self.list2.insert(block.total_count[1], block.last_accessed, block_id, block.num_hashed_tokens)
+        raise NotImplementedError("BSEvictor does not support update operation")
 
     def remove(self, block_id: int):
         """Remove a given block id from the cache."""
@@ -584,6 +574,67 @@ class PensieveEvictor(Evictor):
     @property
     def num_blocks(self) -> int:
         return len(self.free_table)
+
+
+class HotPrefixEvictorC(Evictor):
+    INITIAL_CLOCK = 256
+
+    def __init__(self):
+        import os
+        import sys
+
+        module_directory = os.environ.get("CSET_DIR")
+        if not module_directory or not os.path.exists(module_directory):
+            raise FileNotFoundError(
+                f"Module directory {module_directory} not found!")
+        if module_directory not in sys.path:
+            sys.path.append(module_directory)
+        from c_set import HotPrefixEvictorCore
+
+        self.free_table: Dict[int, BlockMetaData] = {}
+        self.core = HotPrefixEvictorCore()
+        self._has_evicted = False
+
+    def __contains__(self, block_id: int) -> bool:
+        return self.core.contains(block_id)
+
+    def evict(self) -> Tuple[int, int]:
+        try:
+            evicted_id, content_hash = self.core.evict()
+        except RuntimeError as error:
+            raise ValueError("No usable cache memory left") from error
+        self.free_table.pop(evicted_id)
+        if not self._has_evicted:
+            logger.debug(
+                f"First eviction, table size = {len(self.free_table)}")
+            self._has_evicted = True
+        return evicted_id, content_hash
+
+    def add(self, block_id: int, content_hash: int, num_hashed_tokens: int,
+            last_accessed: float, total_count: Optional[Union[
+                float, Tuple[float, float]]] = None):
+        self.core.add(block_id, content_hash, num_hashed_tokens)
+        self.free_table[block_id] = BlockMetaData(
+            content_hash, num_hashed_tokens, self.INITIAL_CLOCK, total_count)
+
+    def aging_all(self) -> None:
+        self.core.aging_all()
+
+    def update(self, block_id: int, last_accessed: float):
+        raise NotImplementedError("HotPrefixEvictorC does not support update")
+
+    def remove(self, block_id: int):
+        if block_id not in self.free_table:
+            raise ValueError(
+                "Attempting to remove block that's not in the evictor")
+        block = self.free_table[block_id]
+        block.last_accessed = self.core.get_clock(block_id)
+        self.core.remove(block_id)
+        return self.free_table.pop(block_id)
+
+    @property
+    def num_blocks(self) -> int:
+        return self.core.size()
 
 
 class WeightEvictor(Evictor):
@@ -784,5 +835,7 @@ def make_evictor(eviction_policy: EvictionPolicy) -> Evictor:
         return PensieveEvictor(
             lambda x: EVICTOR_DELTA_SLOPE * x + EVICTOR_DELTA_INTERCEPT,
         )
+    elif eviction_policy == EvictionPolicy.HOTPREFIX:
+        return HotPrefixEvictorC()
     else:
         raise ValueError(f"Unknown cache eviction policy: {eviction_policy}")

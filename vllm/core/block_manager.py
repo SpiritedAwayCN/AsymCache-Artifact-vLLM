@@ -349,6 +349,9 @@ class SelfAttnBlockSpaceManager(BlockSpaceManager):
         self.block_tables[seq_id].free(multiplier=multiplier)
         del self.block_tables[seq_id]
 
+    def aging_all(self) -> None:
+        self.block_allocator.aging_all()
+
     def free_cross(self, seq_group: SequenceGroup) -> None:
         request_id = seq_group.request_id
         if request_id not in self.cross_block_tables:
